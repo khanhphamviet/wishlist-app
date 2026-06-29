@@ -1,0 +1,11 @@
+{
+  "wishlist": {
+    "title": "My Wishlist",
+    "empty_title": "Your wishlist is empty",
+    "empty_text": "Save products you love and find them here.",
+    "browse": "Browse products",
+    "login_required": "Please log in to view your wishlist.",
+    "error": "Something went wrong. Please refresh the page.",
+    "remove": "Remove from wishlist"
+  }
+}

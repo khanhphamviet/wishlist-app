@@ -1,13 +1,23 @@
 (function () {
+  const root = document.getElementById('wishlist-root');
   const grid = document.getElementById('wishlist-grid');
   const emptyEl = document.getElementById('wishlist-empty');
   const emptyText = document.getElementById('wishlist-empty-text');
   const loadingEl = document.getElementById('wishlist-loading');
 
-  function formatPrice(amount, currencyCode) {
-    return new Intl.NumberFormat('en-US', {
+  const locale   = root.dataset.locale   || 'en';
+  const currency = root.dataset.currency || 'USD';
+
+  const i18n = {
+    loginText:   root.dataset.loginText,
+    errorText:   root.dataset.errorText,
+    removeLabel: root.dataset.removeLabel,
+  };
+
+  function formatPrice(amount) {
+    return new Intl.NumberFormat(locale, {
       style: 'currency',
-      currency: currencyCode,
+      currency,
     }).format(amount);
   }
 
@@ -25,9 +35,9 @@
           </a>
           <div class="wishlist-card__info">
             <a href="${p.url}" class="wishlist-card__title">${p.title}</a>
-            <p class="wishlist-card__price">${formatPrice(p.price, p.currencyCode)}</p>
+            <p class="wishlist-card__price">${formatPrice(p.price)}</p>
           </div>
-          <button class="wishlist-card__remove" data-product-id="${p.id}" aria-label="Remove from wishlist">
+          <button class="wishlist-card__remove" data-product-id="${p.id}" aria-label="${i18n.removeLabel}">
             &times;
           </button>
         </div>
@@ -68,7 +78,7 @@
       if (res.status === 401) {
         loadingEl.style.display = 'none';
         emptyEl.style.display = 'flex';
-        emptyText.textContent = 'Please log in to view your wishlist.';
+        emptyText.textContent = i18n.loginText;
         return;
       }
 
@@ -86,7 +96,7 @@
     } catch (err) {
       loadingEl.style.display = 'none';
       emptyEl.style.display = 'flex';
-      emptyText.textContent = 'Something went wrong. Please refresh the page.';
+      emptyText.textContent = i18n.errorText;
       console.error('[Wishlist]', err);
     }
   }

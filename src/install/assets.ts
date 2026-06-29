@@ -61,15 +61,25 @@ export const WISHLIST_BTN_JS = `(function () {
 `;
 
 export const WISHLIST_PAGE_JS = `(function () {
+  const root = document.getElementById('wishlist-root');
   const grid = document.getElementById('wishlist-grid');
   const emptyEl = document.getElementById('wishlist-empty');
   const emptyText = document.getElementById('wishlist-empty-text');
   const loadingEl = document.getElementById('wishlist-loading');
 
-  function formatPrice(amount, currencyCode) {
-    return new Intl.NumberFormat('en-US', {
+  const locale   = root.dataset.locale   || 'en';
+  const currency = root.dataset.currency || 'USD';
+
+  const i18n = {
+    loginText:   root.dataset.loginText,
+    errorText:   root.dataset.errorText,
+    removeLabel: root.dataset.removeLabel,
+  };
+
+  function formatPrice(amount) {
+    return new Intl.NumberFormat(locale, {
       style: 'currency',
-      currency: currencyCode,
+      currency,
     }).format(amount);
   }
 
@@ -87,9 +97,9 @@ export const WISHLIST_PAGE_JS = `(function () {
           </a>
           <div class="wishlist-card__info">
             <a href="\${p.url}" class="wishlist-card__title">\${p.title}</a>
-            <p class="wishlist-card__price">\${formatPrice(p.price, p.currencyCode)}</p>
+            <p class="wishlist-card__price">\${formatPrice(p.price)}</p>
           </div>
-          <button class="wishlist-card__remove" data-product-id="\${p.id}" aria-label="Remove from wishlist">
+          <button class="wishlist-card__remove" data-product-id="\${p.id}" aria-label="\${i18n.removeLabel}">
             &times;
           </button>
         </div>
@@ -130,7 +140,7 @@ export const WISHLIST_PAGE_JS = `(function () {
       if (res.status === 401) {
         loadingEl.style.display = 'none';
         emptyEl.style.display = 'flex';
-        emptyText.textContent = 'Please log in to view your wishlist.';
+        emptyText.textContent = i18n.loginText;
         return;
       }
 
@@ -148,7 +158,7 @@ export const WISHLIST_PAGE_JS = `(function () {
     } catch (err) {
       loadingEl.style.display = 'none';
       emptyEl.style.display = 'flex';
-      emptyText.textContent = 'Something went wrong. Please refresh the page.';
+      emptyText.textContent = i18n.errorText;
       console.error('[Wishlist]', err);
     }
   }
@@ -345,16 +355,24 @@ export const WISHLIST_PAGE_LIQUID = `<style>
   }
 </style>
 
-<div class="wishlist-page page-width">
+<div class="wishlist-page page-width"
+  id="wishlist-root"
+  data-locale="{{ request.locale.iso_code }}"
+  data-currency="{{ cart.currency.iso_code }}"
+  data-login-text="{{ 'wishlist.login_required' | t }}"
+  data-error-text="{{ 'wishlist.error' | t }}"
+  data-remove-label="{{ 'wishlist.remove' | t }}"
+>
+  <h1 class="wishlist-page__title">{{ 'wishlist.title' | t }}</h1>
   <div class="wishlist-grid" id="wishlist-grid"></div>
 
   <div class="wishlist-empty" id="wishlist-empty">
     <svg class="wishlist-empty__icon" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
       <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
     </svg>
-    <p class="wishlist-empty__title">Your wishlist is empty</p>
-    <p class="wishlist-empty__text" id="wishlist-empty-text">Save products you love and find them here.</p>
-    <a href="/collections/all" class="button">Browse products</a>
+    <p class="wishlist-empty__title">{{ 'wishlist.empty_title' | t }}</p>
+    <p class="wishlist-empty__text" id="wishlist-empty-text">{{ 'wishlist.empty_text' | t }}</p>
+    <a href="/collections/all" class="button">{{ 'wishlist.browse' | t }}</a>
   </div>
 
   <div class="wishlist-loading" id="wishlist-loading">
@@ -410,4 +428,38 @@ export const WISHLIST_PAGE_TEMPLATE_JSON = `{
     }
   },
   "order": ["main"]
+}`;
+
+export const WISHLIST_LOCALE_EN    = `{
+  "wishlist": {
+    "title": "My Wishlist",
+    "empty_title": "Your wishlist is empty",
+    "empty_text": "Save products you love and find them here.",
+    "browse": "Browse products",
+    "login_required": "Please log in to view your wishlist.",
+    "error": "Something went wrong. Please refresh the page.",
+    "remove": "Remove from wishlist"
+  }
+}`;
+export const WISHLIST_LOCALE_JA    = `{
+  "wishlist": {
+    "title": "お気に入りリスト",
+    "empty_title": "お気に入りリストは空です",
+    "empty_text": "気に入った商品を保存して、後で見つけましょう。",
+    "browse": "商品を見る",
+    "login_required": "お気に入りリストを見るにはログインしてください。",
+    "error": "エラーが発生しました。ページを更新してください。",
+    "remove": "お気に入りから削除"
+  }
+}`;
+export const WISHLIST_LOCALE_ZH_TW = `{
+  "wishlist": {
+    "title": "我的願望清單",
+    "empty_title": "您的願望清單是空的",
+    "empty_text": "儲存您喜愛的商品，在這裡找到它們。",
+    "browse": "瀏覽商品",
+    "login_required": "請登入以查看您的願望清單。",
+    "error": "發生錯誤，請重新整理頁面。",
+    "remove": "從願望清單移除"
+  }
 }`;

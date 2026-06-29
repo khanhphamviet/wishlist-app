@@ -186,16 +186,24 @@
   }
 </style>
 
-<div class="wishlist-page page-width">
+<div class="wishlist-page page-width"
+  id="wishlist-root"
+  data-locale="{{ request.locale.iso_code }}"
+  data-currency="{{ cart.currency.iso_code }}"
+  data-login-text="{{ 'wishlist.login_required' | t }}"
+  data-error-text="{{ 'wishlist.error' | t }}"
+  data-remove-label="{{ 'wishlist.remove' | t }}"
+>
+  <h1 class="wishlist-page__title">{{ 'wishlist.title' | t }}</h1>
   <div class="wishlist-grid" id="wishlist-grid"></div>
 
   <div class="wishlist-empty" id="wishlist-empty">
     <svg class="wishlist-empty__icon" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
       <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
     </svg>
-    <p class="wishlist-empty__title">Your wishlist is empty</p>
-    <p class="wishlist-empty__text" id="wishlist-empty-text">Save products you love and find them here.</p>
-    <a href="/collections/all" class="button">Browse products</a>
+    <p class="wishlist-empty__title">{{ 'wishlist.empty_title' | t }}</p>
+    <p class="wishlist-empty__text" id="wishlist-empty-text">{{ 'wishlist.empty_text' | t }}</p>
+    <a href="/collections/all" class="button">{{ 'wishlist.browse' | t }}</a>
   </div>
 
   <div class="wishlist-loading" id="wishlist-loading">

@@ -3,10 +3,19 @@ import {
   WISHLIST_BTN_CSS,
   WISHLIST_BTN_HTML,
   WISHLIST_BTN_JS,
+  WISHLIST_LOCALE_EN,
+  WISHLIST_LOCALE_JA,
+  WISHLIST_LOCALE_ZH_TW,
   WISHLIST_PAGE_JS,
   WISHLIST_PAGE_LIQUID,
   WISHLIST_PAGE_TEMPLATE_JSON,
 } from './assets';
+
+const LOCALES = [
+  { key: 'locales/en.default.json', content: () => WISHLIST_LOCALE_EN },
+  { key: 'locales/ja.json',         content: () => WISHLIST_LOCALE_JA },
+  { key: 'locales/zh-TW.json',      content: () => WISHLIST_LOCALE_ZH_TW },
+];
 
 @Injectable()
 export class InstallService {
@@ -58,6 +67,48 @@ export class InstallService {
     }
   }
 
+  private deepMerge(target: Record<string, any>, source: Record<string, any>): Record<string, any> {
+    const result = { ...target };
+    for (const key of Object.keys(source)) {
+      if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
+        result[key] = this.deepMerge(target[key] || {}, source[key]);
+      } else {
+        result[key] = source[key];
+      }
+    }
+    return result;
+  }
+
+  private async mergeLocales(themeId: string): Promise<string[]> {
+    const results: string[] = [];
+    for (const { key, content } of LOCALES) {
+      const existing = await this.getAsset(themeId, key);
+      const wishlistKeys = JSON.parse(content());
+      const merged = existing
+        ? this.deepMerge(JSON.parse(existing), wishlistKeys)
+        : wishlistKeys;
+      await this.uploadAsset(themeId, key, JSON.stringify(merged, null, 2));
+      results.push(`Merged locale keys: ${key}`);
+    }
+    return results;
+  }
+
+  private async removeLocaleKeys(themeId: string): Promise<string[]> {
+    const results: string[] = [];
+    for (const { key } of LOCALES) {
+      const existing = await this.getAsset(themeId, key);
+      if (!existing) { results.push(`Skipped: ${key} not found`); continue; }
+
+      const current = JSON.parse(existing);
+      if (!current.wishlist) { results.push(`Skipped: no wishlist keys in ${key}`); continue; }
+
+      delete current.wishlist;
+      await this.uploadAsset(themeId, key, JSON.stringify(current, null, 2));
+      results.push(`Removed wishlist keys from: ${key}`);
+    }
+    return results;
+  }
+
   private async patchMainProduct(themeId: string): Promise<string> {
     const key = 'sections/main-product.liquid';
     const content = await this.getAsset(themeId, key);
@@ -72,12 +123,10 @@ export class InstallService {
 
     let patched = content;
 
-    // Inject button CSS into the first {%- style -%} block
     if (!alreadyHasButton) {
       patched = patched.replace('{%- endstyle -%}', `${WISHLIST_BTN_CSS}{%- endstyle -%}`);
     }
 
-    // Inject button HTML after the product-media-gallery render tag
     if (!alreadyHasButton) {
       const galleryTag = `{% render 'product-media-gallery'`;
       const idx = patched.indexOf(galleryTag);
@@ -87,7 +136,6 @@ export class InstallService {
       }
     }
 
-    // Inject script tag before </product-info>
     if (!alreadyHasScript) {
       patched = patched.replace(
         '</product-info>',
@@ -185,51 +233,6 @@ export class InstallService {
     return `Deleted: /pages/wishlist (id: ${pageId})`;
   }
 
-  async uninstall(): Promise<{ success: boolean; steps: string[] }> {
-    const steps: string[] = [];
-
-    const themeId = await this.getActiveThemeId();
-    steps.push(`Active theme ID: ${themeId}`);
-
-    await this.deleteAsset(themeId, 'assets/wishlist-btn.js');
-    steps.push('Deleted: assets/wishlist-btn.js');
-
-    await this.deleteAsset(themeId, 'assets/wishlist-page.js');
-    steps.push('Deleted: assets/wishlist-page.js');
-
-    await this.deleteAsset(themeId, 'sections/wishlist-page.liquid');
-    steps.push('Deleted: sections/wishlist-page.liquid');
-
-    await this.deleteAsset(themeId, 'templates/page.wishlist.json');
-    steps.push('Deleted: templates/page.wishlist.json');
-
-    const unpatchResult = await this.unpatchMainProduct(themeId);
-    steps.push(unpatchResult);
-
-    const pageResult = await this.deleteWishlistPage();
-    steps.push(pageResult);
-
-    return { success: true, steps };
-  }
-
-  async update(): Promise<{ success: boolean; steps: string[] }> {
-    const steps: string[] = [];
-
-    const themeId = await this.getActiveThemeId();
-    steps.push(`Active theme ID: ${themeId}`);
-
-    await this.uploadAsset(themeId, 'assets/wishlist-btn.js', WISHLIST_BTN_JS);
-    steps.push('Updated: assets/wishlist-btn.js');
-
-    await this.uploadAsset(themeId, 'assets/wishlist-page.js', WISHLIST_PAGE_JS);
-    steps.push('Updated: assets/wishlist-page.js');
-
-    await this.uploadAsset(themeId, 'sections/wishlist-page.liquid', WISHLIST_PAGE_LIQUID);
-    steps.push('Updated: sections/wishlist-page.liquid');
-
-    return { success: true, steps };
-  }
-
   async install(): Promise<{ success: boolean; steps: string[] }> {
     const steps: string[] = [];
 
@@ -251,11 +254,62 @@ export class InstallService {
     const patchResult = await this.patchMainProduct(themeId);
     steps.push(patchResult);
 
+    steps.push(...await this.mergeLocales(themeId));
+
     const pageResult = await this.ensureWishlistPage();
     steps.push(pageResult);
 
     const webhookResult = await this.ensureWebhook();
     steps.push(webhookResult);
+
+    return { success: true, steps };
+  }
+
+  async update(): Promise<{ success: boolean; steps: string[] }> {
+    const steps: string[] = [];
+
+    const themeId = await this.getActiveThemeId();
+    steps.push(`Active theme ID: ${themeId}`);
+
+    await this.uploadAsset(themeId, 'assets/wishlist-btn.js', WISHLIST_BTN_JS);
+    steps.push('Updated: assets/wishlist-btn.js');
+
+    await this.uploadAsset(themeId, 'assets/wishlist-page.js', WISHLIST_PAGE_JS);
+    steps.push('Updated: assets/wishlist-page.js');
+
+    await this.uploadAsset(themeId, 'sections/wishlist-page.liquid', WISHLIST_PAGE_LIQUID);
+    steps.push('Updated: sections/wishlist-page.liquid');
+
+    steps.push(...await this.mergeLocales(themeId));
+
+    return { success: true, steps };
+  }
+
+  async uninstall(): Promise<{ success: boolean; steps: string[] }> {
+    const steps: string[] = [];
+
+    const themeId = await this.getActiveThemeId();
+    steps.push(`Active theme ID: ${themeId}`);
+
+    await this.deleteAsset(themeId, 'assets/wishlist-btn.js');
+    steps.push('Deleted: assets/wishlist-btn.js');
+
+    await this.deleteAsset(themeId, 'assets/wishlist-page.js');
+    steps.push('Deleted: assets/wishlist-page.js');
+
+    await this.deleteAsset(themeId, 'sections/wishlist-page.liquid');
+    steps.push('Deleted: sections/wishlist-page.liquid');
+
+    await this.deleteAsset(themeId, 'templates/page.wishlist.json');
+    steps.push('Deleted: templates/page.wishlist.json');
+
+    const unpatchResult = await this.unpatchMainProduct(themeId);
+    steps.push(unpatchResult);
+
+    steps.push(...await this.removeLocaleKeys(themeId));
+
+    const pageResult = await this.deleteWishlistPage();
+    steps.push(pageResult);
 
     return { success: true, steps };
   }
