@@ -5,6 +5,7 @@ import {
   WISHLIST_BTN_JS,
   WISHLIST_LOCALE_EN,
   WISHLIST_LOCALE_JA,
+  WISHLIST_LOCALE_KO,
   WISHLIST_LOCALE_ZH_TW,
   WISHLIST_PAGE_JS,
   WISHLIST_PAGE_LIQUID,
@@ -15,6 +16,7 @@ const LOCALES = [
   { key: 'locales/en.default.json', content: () => WISHLIST_LOCALE_EN },
   { key: 'locales/ja.json',         content: () => WISHLIST_LOCALE_JA },
   { key: 'locales/zh-TW.json',      content: () => WISHLIST_LOCALE_ZH_TW },
+  { key: 'locales/ko.json',         content: () => WISHLIST_LOCALE_KO },
 ];
 
 @Injectable()

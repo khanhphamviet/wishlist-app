@@ -5,14 +5,20 @@
   const emptyText = document.getElementById('wishlist-empty-text');
   const loadingEl = document.getElementById('wishlist-loading');
 
-  const locale   = root.dataset.locale   || 'en';
-  const currency = root.dataset.currency || 'USD';
+  const locale     = root.dataset.locale     || 'en';
+  const currency   = root.dataset.currency   || 'USD';
+  const localeRoot = root.dataset.localeRoot || '/';
 
   const i18n = {
     loginText:   root.dataset.loginText,
     errorText:   root.dataset.errorText,
     removeLabel: root.dataset.removeLabel,
   };
+
+  function localizeUrl(path) {
+    const base = localeRoot === '/' ? '' : localeRoot.replace(/\/$/, '');
+    return base + path;
+  }
 
   function formatPrice(amount) {
     return new Intl.NumberFormat(locale, {
@@ -26,7 +32,7 @@
       .map(
         (p) => `
         <div class="wishlist-card" data-product-id="${p.id}">
-          <a href="${p.url}" class="wishlist-card__image-link">
+          <a href="${localizeUrl(p.url)}" class="wishlist-card__image-link">
             ${
               p.image
                 ? `<img src="${p.image}" alt="${p.title}" class="wishlist-card__image" loading="lazy">`
@@ -34,7 +40,7 @@
             }
           </a>
           <div class="wishlist-card__info">
-            <a href="${p.url}" class="wishlist-card__title">${p.title}</a>
+            <a href="${localizeUrl(p.url)}" class="wishlist-card__title">${p.title}</a>
             <p class="wishlist-card__price">${formatPrice(p.price)}</p>
           </div>
           <button class="wishlist-card__remove" data-product-id="${p.id}" aria-label="${i18n.removeLabel}">

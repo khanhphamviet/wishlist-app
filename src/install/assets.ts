@@ -67,14 +67,20 @@ export const WISHLIST_PAGE_JS = `(function () {
   const emptyText = document.getElementById('wishlist-empty-text');
   const loadingEl = document.getElementById('wishlist-loading');
 
-  const locale   = root.dataset.locale   || 'en';
-  const currency = root.dataset.currency || 'USD';
+  const locale     = root.dataset.locale     || 'en';
+  const currency   = root.dataset.currency   || 'USD';
+  const localeRoot = root.dataset.localeRoot || '/';
 
   const i18n = {
     loginText:   root.dataset.loginText,
     errorText:   root.dataset.errorText,
     removeLabel: root.dataset.removeLabel,
   };
+
+  function localizeUrl(path) {
+    const base = localeRoot === '/' ? '' : localeRoot.replace(/\\/$/, '');
+    return base + path;
+  }
 
   function formatPrice(amount) {
     return new Intl.NumberFormat(locale, {
@@ -88,7 +94,7 @@ export const WISHLIST_PAGE_JS = `(function () {
       .map(
         (p) => \`
         <div class="wishlist-card" data-product-id="\${p.id}">
-          <a href="\${p.url}" class="wishlist-card__image-link">
+          <a href="\${localizeUrl(p.url)}" class="wishlist-card__image-link">
             \${
               p.image
                 ? \`<img src="\${p.image}" alt="\${p.title}" class="wishlist-card__image" loading="lazy">\`
@@ -96,7 +102,7 @@ export const WISHLIST_PAGE_JS = `(function () {
             }
           </a>
           <div class="wishlist-card__info">
-            <a href="\${p.url}" class="wishlist-card__title">\${p.title}</a>
+            <a href="\${localizeUrl(p.url)}" class="wishlist-card__title">\${p.title}</a>
             <p class="wishlist-card__price">\${formatPrice(p.price)}</p>
           </div>
           <button class="wishlist-card__remove" data-product-id="\${p.id}" aria-label="\${i18n.removeLabel}">
@@ -359,6 +365,7 @@ export const WISHLIST_PAGE_LIQUID = `<style>
   id="wishlist-root"
   data-locale="{{ request.locale.iso_code }}"
   data-currency="{{ cart.currency.iso_code }}"
+  data-locale-root="{{ routes.root_url }}"
   data-login-text="{{ 'wishlist.login_required' | t }}"
   data-error-text="{{ 'wishlist.error' | t }}"
   data-remove-label="{{ 'wishlist.remove' | t }}"
@@ -461,5 +468,16 @@ export const WISHLIST_LOCALE_ZH_TW = `{
     "login_required": "請登入以查看您的願望清單。",
     "error": "發生錯誤，請重新整理頁面。",
     "remove": "從願望清單移除"
+  }
+}`;
+export const WISHLIST_LOCALE_KO    = `{
+  "wishlist": {
+    "title": "위시리스트",
+    "empty_title": "위시리스트가 비어 있습니다",
+    "empty_text": "마음에 드는 상품을 저장하고 여기서 찾아보세요.",
+    "browse": "상품 둘러보기",
+    "login_required": "위시리스트를 보려면 로그인해 주세요.",
+    "error": "오류가 발생했습니다. 페이지를 새로 고침해 주세요.",
+    "remove": "위시리스트에서 제거"
   }
 }`;
