@@ -271,3 +271,4 @@ curl -X POST 'http://localhost:3000/wishlist/toggle?customer_id=<CUSTOMER_ID>' \
   -H 'Content-Type: application/json' \
   -d '{"product_id":"<PRODUCT_ID>"}'
 ```
+# wishlist-app
