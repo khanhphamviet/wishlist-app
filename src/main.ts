@@ -1,8 +1,11 @@
+import fastifyView from '@fastify/view';
 import { NestFactory } from '@nestjs/core';
 import {
   FastifyAdapter,
   NestFastifyApplication,
 } from '@nestjs/platform-fastify';
+import * as handlebars from 'handlebars';
+import { join } from 'path';
 import { Readable } from 'stream';
 import { AppModule } from './app.module';
 
@@ -32,11 +35,18 @@ async function bootstrap() {
     },
   );
 
+  // Cast needed due to Fastify version mismatch between @nestjs/platform-fastify and @fastify/view.
+  await app.register(fastifyView as any, {
+    engine: { handlebars },
+    root: join(process.cwd(), 'views'),
+    defaultContext: {},
+  });
+
   // App Proxy requests come from the Shopify storefront domain (myshop.com),
   // not from admin.shopify.com, so CORS must be enabled for the store domain.
   app.enableCors({
-    origin: process.env.STORE_DOMAIN
-      ? [`https://${process.env.STORE_DOMAIN}`]
+    origin: process.env.SHOPIFY_STORE_URL
+      ? [process.env.SHOPIFY_STORE_URL]
       : true,
     methods: ['GET', 'POST'],
   });

@@ -223,26 +223,36 @@ When moving from local to a production server:
 ## 9. Project Structure
 
 ```
+storefront/                         # Source of truth — edit these, then run npm run sync-assets
+├── wishlist-btn.js                 # Heart button — check state on load, toggle on click
+├── wishlist-btn.css                # CSS fragment injected into main-product.liquid
+├── wishlist-btn.html               # HTML fragment injected into main-product.liquid
+├── wishlist-page.js                # Wishlist page — fetch, render cards, handle remove
+├── wishlist-page.liquid            # Liquid section for the wishlist page
+└── page.wishlist.json              # Shopify JSON template
+
+scripts/
+└── sync-assets.js                  # Reads storefront/ and regenerates src/install/assets.ts
+
 src/
 ├── common/
 │   ├── app-proxy.guard.ts          # HMAC signature verification (for published apps)
 │   └── current-customer.decorator.ts  # Resolves customer ID + RequireLoginGuard
 ├── install/
-│   ├── assets.ts                   # Storefront JS/Liquid as TS constants (source of truth)
+│   ├── assets.ts                   # AUTO-GENERATED — do not edit manually
 │   ├── install.service.ts          # Theme Assets API — upload, patch, delete
-│   └── install.controller.ts       # POST /install, POST /install/update, DELETE /install
+│   └── install.controller.ts       # GET /install (dashboard), POST, POST /update, DELETE
 ├── shopify/
 │   └── shopify-admin.service.ts    # GraphQL client — metafield read/write, product fetch
 ├── webhooks/
 │   ├── webhooks.service.ts         # HMAC verification + uninstall handler
 │   └── webhooks.controller.ts      # POST /webhooks/app/uninstalled
 └── wishlist/
-    ├── wishlist.service.ts          # Toggle/list/check business logic
-    └── wishlist.controller.ts       # GET /wishlist/list, /check, POST /toggle
+    ├── wishlist.service.ts         # Toggle/list/check business logic
+    └── wishlist.controller.ts      # GET /wishlist/list, /check, POST /toggle
 
-storefront/
-├── wishlist-btn.js                 # Heart button — check state on load, toggle on click
-└── wishlist-page.js                # Wishlist page — fetch, render cards, handle remove
+views/
+└── dashboard.hbs                   # Install dashboard UI (Handlebars template)
 ```
 
 ## 10. Testing

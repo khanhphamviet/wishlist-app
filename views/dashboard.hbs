@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wishlist App — Dashboard</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #f4f6f8;
+      color: #1a1a1a;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+      padding: 2.4rem;
+      width: 100%;
+      max-width: 560px;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 2rem;
+      padding-bottom: 1.6rem;
+      border-bottom: 1px solid #f0f0f0;
+    }
+
+    .header svg { color: #e63946; flex-shrink: 0; }
+    .header h1 { font-size: 1.3rem; font-weight: 600; }
+    .header p { font-size: 0.85rem; color: #666; margin-top: 2px; }
+
+    .actions { display: flex; flex-direction: column; gap: 0.8rem; }
+
+    .btn {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.85rem 1.2rem;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: opacity 0.15s, transform 0.1s;
+      text-align: left;
+    }
+
+    .btn:hover { opacity: 0.88; }
+    .btn:active { transform: scale(0.98); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+    .btn-install   { background: #1a1a1a; color: #fff; }
+    .btn-update    { background: #2c7be5; color: #fff; }
+    .btn-uninstall { background: #fff; color: #e63946; border: 1.5px solid #e63946; }
+
+    .btn-icon { font-size: 1.1rem; width: 20px; text-align: center; }
+
+    .btn-text { flex: 1; }
+    .btn-text span { display: block; }
+    .btn-text .sub { font-size: 0.75rem; opacity: 0.7; font-weight: 400; margin-top: 1px; }
+
+    .divider {
+      display: flex;
+      align-items: center;
+      gap: 0.8rem;
+      margin: 1.2rem 0 0.4rem;
+      color: #999;
+      font-size: 0.78rem;
+      font-weight: 500;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+    .divider::before, .divider::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: #f0f0f0;
+    }
+
+    .output {
+      margin-top: 1.6rem;
+      border-radius: 8px;
+      background: #0f1117;
+      overflow: hidden;
+      display: none;
+    }
+
+    .output.visible { display: block; }
+
+    .output-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.6rem 1rem;
+      background: #1a1d27;
+      font-size: 0.75rem;
+      color: #888;
+    }
+
+    .output-status { display: flex; align-items: center; gap: 0.4rem; }
+
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #555; }
+    .dot.running { background: #f5a623; animation: pulse 1s infinite; }
+    .dot.success { background: #2ecc71; }
+    .dot.error   { background: #e63946; }
+
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+    .output-body {
+      padding: 1rem;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 0.8rem;
+      line-height: 1.7;
+      color: #cdd6f4;
+      min-height: 80px;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .line-ok    { color: #2ecc71; }
+    .line-skip  { color: #888; }
+    .line-error { color: #e63946; }
+    .line-info  { color: #89b4fa; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="header">
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+      </svg>
+      <div>
+        <h1>Wishlist App</h1>
+        <p>Manage theme installation for your Shopify store</p>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="btn btn-install" onclick="run('Install', 'POST', '/install')">
+        <span class="btn-icon">⚡</span>
+        <span class="btn-text">
+          <span>Install</span>
+          <span class="sub">Upload assets, patch theme, create page &amp; register webhook</span>
+        </span>
+      </button>
+
+      <button class="btn btn-update" onclick="run('Update', 'POST', '/install/update')">
+        <span class="btn-icon">↑</span>
+        <span class="btn-text">
+          <span>Update</span>
+          <span class="sub">Re-upload JS and Liquid assets only</span>
+        </span>
+      </button>
+
+      <div class="divider">danger zone</div>
+
+      <button class="btn btn-uninstall" onclick="confirmUninstall()">
+        <span class="btn-icon">✕</span>
+        <span class="btn-text">
+          <span>Uninstall</span>
+          <span class="sub">Remove all theme changes and the wishlist page</span>
+        </span>
+      </button>
+    </div>
+
+    <div class="output" id="output">
+      <div class="output-header">
+        <span id="output-label">Output</span>
+        <span class="output-status">
+          <span class="dot" id="dot"></span>
+          <span id="status-text">running</span>
+        </span>
+      </div>
+      <div class="output-body" id="output-body"></div>
+    </div>
+  </div>
+
+  <script>
+    let running = false;
+
+    function setRunning(state) {
+      running = state;
+      document.querySelectorAll('.btn').forEach(b => b.disabled = state);
+    }
+
+    function showOutput(label) {
+      document.getElementById('output').classList.add('visible');
+      document.getElementById('output-label').textContent = label;
+      document.getElementById('output-body').textContent = '';
+      setDot('running', 'running...');
+    }
+
+    function setDot(cls, text) {
+      document.getElementById('dot').className = 'dot ' + cls;
+      document.getElementById('status-text').textContent = text;
+    }
+
+    function appendLine(text, cls) {
+      const body = document.getElementById('output-body');
+      const line = document.createElement('span');
+      line.className = cls || '';
+      line.textContent = text + '\n';
+      body.appendChild(line);
+    }
+
+    async function run(label, method, path) {
+      if (running) return;
+      setRunning(true);
+      showOutput(label);
+
+      try {
+        const res = await fetch(path, { method });
+        const data = await res.json();
+
+        if (data.steps) {
+          data.steps.forEach(step => {
+            const cls = step.startsWith('Skipped') ? 'line-skip'
+                      : step.startsWith('Active')  ? 'line-info'
+                      : 'line-ok';
+            appendLine('✓ ' + step, cls);
+          });
+        } else {
+          appendLine(JSON.stringify(data, null, 2), 'line-error');
+        }
+
+        setDot(res.ok ? 'success' : 'error', res.ok ? 'done' : 'failed');
+      } catch (err) {
+        appendLine('Error: ' + err.message, 'line-error');
+        setDot('error', 'failed');
+      } finally {
+        setRunning(false);
+      }
+    }
+
+    function confirmUninstall() {
+      if (running) return;
+      if (confirm('This will remove all wishlist theme changes and delete the wishlist page. Continue?')) {
+        run('Uninstall', 'DELETE', '/install');
+      }
+    }
+  </script>
+</body>
+</html>

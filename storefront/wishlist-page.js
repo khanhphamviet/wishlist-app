@@ -55,9 +55,7 @@
 
       card.remove();
 
-      if (grid.children.length === 0) {
-        emptyEl.style.display = '';
-      }
+      if (grid.children.length === 0) emptyEl.style.display = 'flex';
     } catch {
       alert('Could not remove product. Please try again.');
     }
