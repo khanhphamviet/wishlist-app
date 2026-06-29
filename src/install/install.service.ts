@@ -15,9 +15,9 @@ import {
 
 const LOCALES = [
   { key: 'locales/en.default.json', content: () => WISHLIST_LOCALE_EN },
-  { key: 'locales/ja.json',         content: () => WISHLIST_LOCALE_JA },
-  { key: 'locales/zh-TW.json',      content: () => WISHLIST_LOCALE_ZH_TW },
-  { key: 'locales/ko.json',         content: () => WISHLIST_LOCALE_KO },
+  { key: 'locales/ja.json', content: () => WISHLIST_LOCALE_JA },
+  { key: 'locales/zh-TW.json', content: () => WISHLIST_LOCALE_ZH_TW },
+  { key: 'locales/ko.json', content: () => WISHLIST_LOCALE_KO },
 ];
 
 @Injectable()
@@ -56,7 +56,9 @@ export class InstallService {
   }
 
   private async getActiveThemeId(): Promise<string> {
-    const data = await this.shopifyFetch<{ themes: { id: number; role: string }[] }>('/themes.json');
+    const data = await this.shopifyFetch<{ themes: { id: number; role: string }[] }>(
+      '/themes.json',
+    );
     const theme = data.themes.find((t) => t.role === 'main');
     if (!theme) throw new Error('No active theme found');
     return String(theme.id);
@@ -98,9 +100,7 @@ export class InstallService {
     for (const { key, content } of LOCALES) {
       const existing = await this.getAsset(themeId, key);
       const wishlistKeys = JSON.parse(content());
-      const merged = existing
-        ? this.deepMerge(JSON.parse(existing), wishlistKeys)
-        : wishlistKeys;
+      const merged = existing ? this.deepMerge(JSON.parse(existing), wishlistKeys) : wishlistKeys;
       await this.uploadAsset(themeId, key, JSON.stringify(merged, null, 2));
       results.push(`Merged locale keys: ${key}`);
     }
@@ -111,10 +111,16 @@ export class InstallService {
     const results: string[] = [];
     for (const { key } of LOCALES) {
       const existing = await this.getAsset(themeId, key);
-      if (!existing) { results.push(`Skipped: ${key} not found`); continue; }
+      if (!existing) {
+        results.push(`Skipped: ${key} not found`);
+        continue;
+      }
 
       const current = JSON.parse(existing);
-      if (!current.wishlist) { results.push(`Skipped: no wishlist keys in ${key}`); continue; }
+      if (!current.wishlist) {
+        results.push(`Skipped: no wishlist keys in ${key}`);
+        continue;
+      }
 
       delete current.wishlist;
       await this.uploadAsset(themeId, key, JSON.stringify(current, null, 2));
@@ -235,7 +241,9 @@ export class InstallService {
   }
 
   private async syncWishlistPage(): Promise<string> {
-    const data = await this.shopifyFetch<{ pages: { id: number }[] }>('/pages.json?handle=wishlist');
+    const data = await this.shopifyFetch<{ pages: { id: number }[] }>(
+      '/pages.json?handle=wishlist',
+    );
     const page = { title: 'Wishlist', handle: 'wishlist', template_suffix: 'wishlist' };
 
     if (data.pages.length > 0) {
@@ -303,7 +311,9 @@ export class InstallService {
   }
 
   private async deleteWishlistPage(): Promise<string> {
-    const data = await this.shopifyFetch<{ pages: { id: number }[] }>('/pages.json?handle=wishlist');
+    const data = await this.shopifyFetch<{ pages: { id: number }[] }>(
+      '/pages.json?handle=wishlist',
+    );
     if (data.pages.length === 0) return 'Skipped: /pages/wishlist not found';
 
     const pageId = data.pages[0].id;
@@ -332,7 +342,7 @@ export class InstallService {
     const patchResult = await this.patchMainProduct(themeId);
     steps.push(patchResult);
 
-    steps.push(...await this.mergeLocales(themeId));
+    steps.push(...(await this.mergeLocales(themeId)));
 
     const pageResult = await this.syncWishlistPage();
     steps.push(pageResult);
@@ -364,7 +374,7 @@ export class InstallService {
     const unpatchResult = await this.unpatchMainProduct(themeId);
     steps.push(unpatchResult);
 
-    steps.push(...await this.removeLocaleKeys(themeId));
+    steps.push(...(await this.removeLocaleKeys(themeId)));
 
     const pageResult = await this.deleteWishlistPage();
     steps.push(pageResult);

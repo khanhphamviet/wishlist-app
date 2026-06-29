@@ -62,7 +62,7 @@ export class ShopifyAdminService {
     try {
       const parsed = JSON.parse(rawValue);
       return Array.isArray(parsed) ? parsed : [];
-    } catch (err) {
+    } catch {
       this.logger.warn(`Failed to parse wishlist metafield: ${rawValue}`);
       return [];
     }
@@ -71,10 +71,7 @@ export class ShopifyAdminService {
   /**
    * Overwrites the customer's wishlist metafield with the given list of product IDs.
    */
-  async setWishlistProductIds(
-    customerGid: string,
-    productIds: string[],
-  ): Promise<void> {
+  async setWishlistProductIds(customerGid: string, productIds: string[]): Promise<void> {
     const mutation = gql`
       mutation SetWishlist($metafields: [MetafieldsSetInput!]!) {
         metafieldsSet(metafields: $metafields) {
@@ -115,9 +112,7 @@ export class ShopifyAdminService {
   /**
    * Fetches display information (title, handle, image, price) for multiple products.
    */
-  async getProductsByIds(
-    productGids: string[],
-  ): Promise<
+  async getProductsByIds(productGids: string[]): Promise<
     {
       id: string;
       title: string;

@@ -1,16 +1,5 @@
-import {
-  Body,
-  Controller,
-  Get,
-  Logger,
-  Post,
-  Query,
-  UseGuards,
-} from '@nestjs/common';
-import {
-  CurrentCustomerId,
-  RequireLoginGuard,
-} from '../common/current-customer.decorator';
+import { Body, Controller, Get, Logger, Post, Query, UseGuards } from '@nestjs/common';
+import { CurrentCustomerId, RequireLoginGuard } from '../common/current-customer.decorator';
 import { WishlistService } from './wishlist.service';
 
 /**
@@ -36,23 +25,14 @@ export class WishlistController {
   }
 
   @Get('check')
-  async check(
-    @CurrentCustomerId() customerId: string,
-    @Query('product_id') productId: string,
-  ) {
+  async check(@CurrentCustomerId() customerId: string, @Query('product_id') productId: string) {
     this.logger.log(`check → customerId: ${customerId}, productId: ${productId}`);
-    const isWishlisted = await this.wishlistService.checkIsWishlisted(
-      customerId,
-      productId,
-    );
+    const isWishlisted = await this.wishlistService.checkIsWishlisted(customerId, productId);
     return { is_wishlisted: isWishlisted };
   }
 
   @Post('toggle')
-  async toggle(
-    @CurrentCustomerId() customerId: string,
-    @Body('product_id') productId: string,
-  ) {
+  async toggle(@CurrentCustomerId() customerId: string, @Body('product_id') productId: string) {
     this.logger.log(`toggle → customerId: ${customerId}, productId: ${productId}`);
     const result = await this.wishlistService.toggle(customerId, productId);
     return { is_wishlisted: result.isWishlisted };

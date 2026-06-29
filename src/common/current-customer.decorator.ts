@@ -11,10 +11,7 @@ import { FastifyRequest } from 'fastify';
 function resolveCustomerId(req: FastifyRequest): string | null {
   const query = req.query as Record<string, string>;
   return (
-    (req as any).shopifyCustomerId ||
-    query?.logged_in_customer_id ||
-    query?.customer_id ||
-    null
+    (req as any).shopifyCustomerId || query?.logged_in_customer_id || query?.customer_id || null
   );
 }
 
@@ -45,12 +42,20 @@ export class RequireLoginGuard implements CanActivate {
 
     this.logger.debug(`[RequireLoginGuard] url: ${req.url}`);
     this.logger.debug(`[RequireLoginGuard] query params: ${JSON.stringify(query)}`);
-    this.logger.debug(`[RequireLoginGuard] shopifyCustomerId (from guard): ${(req as any).shopifyCustomerId ?? 'undefined'}`);
-    this.logger.debug(`[RequireLoginGuard] logged_in_customer_id (from proxy): ${query?.logged_in_customer_id ?? 'undefined'}`);
-    this.logger.debug(`[RequireLoginGuard] customer_id (local test): ${query?.customer_id ?? 'undefined'}`);
+    this.logger.debug(
+      `[RequireLoginGuard] shopifyCustomerId (from guard): ${(req as any).shopifyCustomerId ?? 'undefined'}`,
+    );
+    this.logger.debug(
+      `[RequireLoginGuard] logged_in_customer_id (from proxy): ${query?.logged_in_customer_id ?? 'undefined'}`,
+    );
+    this.logger.debug(
+      `[RequireLoginGuard] customer_id (local test): ${query?.customer_id ?? 'undefined'}`,
+    );
 
     const customerId = resolveCustomerId(req);
-    this.logger.debug(`[RequireLoginGuard] resolved customerId: ${customerId ?? 'null'} → ${customerId ? 'ALLOW' : 'BLOCK'}`);
+    this.logger.debug(
+      `[RequireLoginGuard] resolved customerId: ${customerId ?? 'null'} → ${customerId ? 'ALLOW' : 'BLOCK'}`,
+    );
 
     if (!customerId) {
       throw new UnauthorizedException('Please log in to use the wishlist');

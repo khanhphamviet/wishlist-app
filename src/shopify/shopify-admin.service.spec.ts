@@ -98,9 +98,9 @@ describe('ShopifyAdminService', () => {
       mockRequest.mockResolvedValue({
         metafieldsSet: { userErrors: [{ field: ['value'], message: 'Invalid value' }] },
       });
-      await expect(
-        service.setWishlistProductIds('gid://shopify/Customer/1', []),
-      ).rejects.toThrow('Invalid value');
+      await expect(service.setWishlistProductIds('gid://shopify/Customer/1', [])).rejects.toThrow(
+        'Invalid value',
+      );
     });
 
     it('sends the correct product IDs as JSON', async () => {
@@ -166,7 +166,10 @@ describe('ShopifyAdminService', () => {
 
     it('filters out null nodes', async () => {
       mockRequest.mockResolvedValue({ nodes: [null, null] });
-      const result = await service.getProductsByIds(['gid://shopify/Product/1', 'gid://shopify/Product/2']);
+      const result = await service.getProductsByIds([
+        'gid://shopify/Product/1',
+        'gid://shopify/Product/2',
+      ]);
       expect(result).toEqual([]);
     });
   });

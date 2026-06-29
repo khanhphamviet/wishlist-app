@@ -20,13 +20,8 @@ export class WishlistService {
     return gid.split('/').pop() ?? gid;
   }
 
-  async checkIsWishlisted(
-    customerId: string,
-    productId: string,
-  ): Promise<boolean> {
-    const ids = await this.shopifyAdmin.getWishlistProductIds(
-      this.toCustomerGid(customerId),
-    );
+  async checkIsWishlisted(customerId: string, productId: string): Promise<boolean> {
+    const ids = await this.shopifyAdmin.getWishlistProductIds(this.toCustomerGid(customerId));
     return ids.includes(this.toProductGid(productId));
   }
 
@@ -34,16 +29,11 @@ export class WishlistService {
    * Toggles a product in the wishlist (removes it if present, adds it if not).
    * Returns the new state after the toggle.
    */
-  async toggle(
-    customerId: string,
-    productId: string,
-  ): Promise<{ isWishlisted: boolean }> {
+  async toggle(customerId: string, productId: string): Promise<{ isWishlisted: boolean }> {
     const customerGid = this.toCustomerGid(customerId);
     const productGid = this.toProductGid(productId);
 
-    const currentIds = await this.shopifyAdmin.getWishlistProductIds(
-      customerGid,
-    );
+    const currentIds = await this.shopifyAdmin.getWishlistProductIds(customerGid);
 
     const exists = currentIds.includes(productGid);
     const newIds = exists
@@ -60,9 +50,7 @@ export class WishlistService {
    */
   async list(customerId: string) {
     const customerGid = this.toCustomerGid(customerId);
-    const productGids = await this.shopifyAdmin.getWishlistProductIds(
-      customerGid,
-    );
+    const productGids = await this.shopifyAdmin.getWishlistProductIds(customerGid);
 
     if (productGids.length === 0) {
       return { products: [] };

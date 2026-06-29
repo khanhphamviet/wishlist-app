@@ -44,7 +44,7 @@ export class ShopifyTokenService {
       throw new Error(`Failed to fetch access token: ${text}`);
     }
 
-    const data = await res.json() as { access_token: string };
+    const data = (await res.json()) as { access_token: string };
     this.logger.log('Access token refreshed successfully');
     return data.access_token;
   }

@@ -1,9 +1,4 @@
-import {
-  CanActivate,
-  ExecutionContext,
-  Injectable,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { FastifyRequest } from 'fastify';
 
@@ -41,9 +36,7 @@ export class AppProxyGuard implements CanActivate {
       .map((key) => `${key}=${query[key]}`)
       .join('');
 
-    const computedSignature = createHmac('sha256', secret)
-      .update(sortedParams)
-      .digest('hex');
+    const computedSignature = createHmac('sha256', secret).update(sortedParams).digest('hex');
 
     const isValid = this.safeCompare(computedSignature, signature);
 

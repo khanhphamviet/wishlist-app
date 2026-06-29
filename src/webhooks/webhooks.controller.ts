@@ -18,10 +18,7 @@ export class WebhooksController {
 
   @Post('app/uninstalled')
   @HttpCode(200)
-  appUninstalled(
-    @Req() req: FastifyRequest,
-    @Headers('x-shopify-hmac-sha256') hmac: string,
-  ) {
+  appUninstalled(@Req() req: FastifyRequest, @Headers('x-shopify-hmac-sha256') hmac: string) {
     if (!hmac) throw new UnauthorizedException('Missing HMAC header');
 
     const rawBody = (req as any).rawBody as Buffer;
