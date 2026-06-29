@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ShopifyTokenService } from '../shopify/shopify-token.service';
 import {
   WISHLIST_BTN_CSS,
   WISHLIST_BTN_HTML,
@@ -23,23 +24,34 @@ const LOCALES = [
 export class InstallService {
   private readonly logger = new Logger(InstallService.name);
   private readonly storeUrl = process.env.SHOPIFY_STORE_URL!;
-  private readonly accessToken = process.env.SHOPIFY_ACCESS_TOKEN!;
   private readonly apiVersion = '2026-04';
+
+  constructor(private readonly tokenService: ShopifyTokenService) {}
 
   private async shopifyFetch<T = any>(path: string, options: RequestInit = {}): Promise<T> {
     const url = `${this.storeUrl}/admin/api/${this.apiVersion}${path}`;
-    const res = await fetch(url, {
-      ...options,
-      headers: {
-        'X-Shopify-Access-Token': this.accessToken,
-        'Content-Type': 'application/json',
-        ...(options.headers as Record<string, string>),
-      },
-    });
+
+    const doFetch = async (token: string) =>
+      fetch(url, {
+        ...options,
+        headers: {
+          'X-Shopify-Access-Token': token,
+          'Content-Type': 'application/json',
+          ...(options.headers as Record<string, string>),
+        },
+      });
+
+    let res = await doFetch(await this.tokenService.getToken());
+
+    if (res.status === 401) {
+      res = await doFetch(await this.tokenService.refreshToken());
+    }
+
     if (!res.ok) {
       const text = await res.text();
       throw new Error(`Shopify ${res.status} on ${path}: ${text}`);
     }
+
     return res.json() as Promise<T>;
   }
 

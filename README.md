@@ -12,38 +12,36 @@ A NestJS + Fastify backend that adds wishlist functionality to a Shopify storefr
 
 ## 1. Create a Shopify Custom App
 
-This project uses a **Custom App** — created directly inside the Shopify Admin. It is tied to one store and uses a permanent access token (no OAuth needed). This is different from a Partners app which requires an OAuth flow and can be installed on multiple stores.
-
 ### 1.1 Create the app
 
-1. Go to your Shopify Admin → **Settings** → **Apps and sales channels**
-2. Click **Develop apps** → **Create an app**
-3. Give it a name (e.g. `Wishlist App`) and click **Create app**
+1. Go to your Shopify Admin → **Settings** → **Apps**
+2. Click **Build apps in Dev Dashboard** — this opens `dev.shopify.com`
+3. Click **Create app**, give it a name (e.g. `Wishlist App`), select your store
 
 ### 1.2 Configure API scopes
 
-1. Inside the app → **Configuration** tab → **Admin API integration**
-2. Click **Edit** and enable these scopes:
+1. Inside the app → **Configuration** → **Admin API access scopes**
+2. Enable these scopes:
 
 ```
 read_customers, write_customers, read_products,
 read_themes, write_themes, read_content, write_content
 ```
 
-3. Click **Save**
+3. Save and **release a new version** for the scopes to take effect
 
 ### 1.3 Get your credentials
 
-1. Go to the **API credentials** tab
-2. Click **Install app** → **Install**
-3. Copy the credentials:
+In the app → **Settings**:
 
-| Field | Where to find | .env key |
-|-------|--------------|---------|
-| Admin API access token | Shown once after install — copy immediately | `SHOPIFY_ACCESS_TOKEN` |
-| API secret key | Under "API secret key" | `SHOPIFY_API_SECRET` |
+| Field     | Where              | .env key             |
+| --------- | ------------------ | -------------------- |
+| Client ID | Shown directly     | —                    |
+| Secret    | Click the eye icon | `SHOPIFY_API_SECRET` |
 
-> The access token is only shown once. If you miss it, you'll need to uninstall and reinstall the app to generate a new one.
+### 1.4 Access token
+
+No manual step needed — the app fetches a token automatically on startup using `SHOPIFY_API_KEY` + `SHOPIFY_API_SECRET` via OAuth `client_credentials`. It also re-fetches whenever a 401 is returned (e.g. after rotating the secret).
 
 ---
 
@@ -54,11 +52,11 @@ The App Proxy lets the storefront call your backend through Shopify's domain (so
 1. In your app → **Configuration** → **App Proxy**
 2. Fill in:
 
-| Field | Value |
-|-------|-------|
-| Subpath prefix | `apps` |
-| Subpath | `wishlist` |
-| Proxy URL | `https://<your-backend-url>/wishlist` |
+| Field          | Value                                 |
+| -------------- | ------------------------------------- |
+| Subpath prefix | `apps`                                |
+| Subpath        | `wishlist`                            |
+| Proxy URL      | `https://<your-backend-url>/wishlist` |
 
 3. Save — Shopify will forward all `/apps/wishlist/*` storefront requests to your backend, injecting `logged_in_customer_id` automatically.
 
@@ -75,8 +73,8 @@ npm install
 ### 3.2 Configure environment
 
 ```env
-SHOPIFY_ACCESS_TOKEN=shpat_xxxxxxxxxxxxxxxxxxxx
 SHOPIFY_STORE_URL=https://your-store.myshopify.com
+SHOPIFY_API_KEY=your_client_id
 SHOPIFY_API_SECRET=your_client_secret
 
 # Public URL of this backend — used for App Proxy and webhook registration
@@ -114,14 +112,14 @@ curl -X POST http://localhost:3000/install
 
 **What it does:**
 
-| Step | Action |
-|------|--------|
-| 1 | Finds the active theme |
-| 2 | Uploads `assets/wishlist-btn.js` and `assets/wishlist-page.js` |
-| 3 | Uploads `sections/wishlist-page.liquid` and `templates/page.wishlist.json` |
-| 4 | Patches `sections/main-product.liquid` — injects heart button + script tag |
-| 5 | Creates the `/pages/wishlist` Shopify page |
-| 6 | Registers the `app/uninstalled` webhook |
+| Step | Action                                                                     |
+| ---- | -------------------------------------------------------------------------- |
+| 1    | Finds the active theme                                                     |
+| 2    | Uploads `assets/wishlist-btn.js` and `assets/wishlist-page.js`             |
+| 3    | Uploads `sections/wishlist-page.liquid` and `templates/page.wishlist.json` |
+| 4    | Patches `sections/main-product.liquid` — injects heart button + script tag |
+| 5    | Creates the `/pages/wishlist` Shopify page                                 |
+| 6    | Registers the `app/uninstalled` webhook                                    |
 
 Example response:
 
@@ -163,24 +161,24 @@ This removes the uploaded assets, reverts `main-product.liquid`, and deletes the
 
 All wishlist endpoints require a logged-in customer. When called through App Proxy, the customer ID is injected automatically. For local testing, pass `?customer_id=<id>`.
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/wishlist/list` | Returns full product details for all wishlisted items |
-| `GET` | `/wishlist/check?product_id=<id>` | Returns `{ is_wishlisted: boolean }` |
-| `POST` | `/wishlist/toggle` | Adds or removes a product; body: `{ "product_id": "123" }` |
+| Method | Path                              | Description                                                |
+| ------ | --------------------------------- | ---------------------------------------------------------- |
+| `GET`  | `/wishlist/list`                  | Returns full product details for all wishlisted items      |
+| `GET`  | `/wishlist/check?product_id=<id>` | Returns `{ is_wishlisted: boolean }`                       |
+| `POST` | `/wishlist/toggle`                | Adds or removes a product; body: `{ "product_id": "123" }` |
 
 ### Install endpoints
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/install` | Full install — uploads assets, patches theme, creates page, registers webhook |
-| `POST` | `/install/update` | Re-upload JS/Liquid assets only (use after code changes) |
-| `DELETE` | `/install` | Remove all theme changes |
+| Method   | Path              | Description                                                                   |
+| -------- | ----------------- | ----------------------------------------------------------------------------- |
+| `POST`   | `/install`        | Full install — uploads assets, patches theme, creates page, registers webhook |
+| `POST`   | `/install/update` | Re-upload JS/Liquid assets only (use after code changes)                      |
+| `DELETE` | `/install`        | Remove all theme changes                                                      |
 
 ### Webhook endpoints
 
-| Method | Path | Description |
-|--------|------|-------------|
+| Method | Path                        | Description                                           |
+| ------ | --------------------------- | ----------------------------------------------------- |
 | `POST` | `/webhooks/app/uninstalled` | Shopify fires this when a merchant uninstalls the app |
 
 ---
@@ -271,4 +269,5 @@ curl -X POST 'http://localhost:3000/wishlist/toggle?customer_id=<CUSTOMER_ID>' \
   -H 'Content-Type: application/json' \
   -d '{"product_id":"<PRODUCT_ID>"}'
 ```
+
 # wishlist-app

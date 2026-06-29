@@ -1,37 +1,46 @@
+import { Logger } from '@nestjs/common';
 import { ShopifyAdminService } from './shopify-admin.service';
+import { ShopifyTokenService } from './shopify-token.service';
+
+jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
 
 const mockRequest = jest.fn();
+const mockSetHeader = jest.fn();
 
 jest.mock('graphql-request', () => ({
-  GraphQLClient: jest.fn().mockImplementation(() => ({ request: mockRequest })),
+  GraphQLClient: jest.fn().mockImplementation(() => ({
+    request: mockRequest,
+    setHeader: mockSetHeader,
+  })),
   gql: (strings: TemplateStringsArray, ...values: unknown[]) =>
     strings.raw.reduce((acc, str, i) => acc + str + (values[i] ?? ''), ''),
 }));
+
+const mockTokenService = {
+  getToken: jest.fn().mockResolvedValue('shpat_test'),
+  refreshToken: jest.fn().mockResolvedValue('shpat_refreshed'),
+} as unknown as ShopifyTokenService;
 
 describe('ShopifyAdminService', () => {
   let service: ShopifyAdminService;
 
   beforeEach(() => {
     process.env.SHOPIFY_STORE_URL = 'https://khazhjp.myshopify.com';
-    process.env.SHOPIFY_ACCESS_TOKEN = 'shpat_test';
     mockRequest.mockReset();
-    service = new ShopifyAdminService();
+    mockSetHeader.mockReset();
+    service = new ShopifyAdminService(mockTokenService);
   });
 
   afterEach(() => {
     delete process.env.SHOPIFY_STORE_URL;
-    delete process.env.SHOPIFY_ACCESS_TOKEN;
   });
 
   describe('constructor', () => {
     it('throws if SHOPIFY_STORE_URL is missing', () => {
       delete process.env.SHOPIFY_STORE_URL;
-      expect(() => new ShopifyAdminService()).toThrow('SHOPIFY_STORE_URL');
-    });
-
-    it('throws if SHOPIFY_ACCESS_TOKEN is missing', () => {
-      delete process.env.SHOPIFY_ACCESS_TOKEN;
-      expect(() => new ShopifyAdminService()).toThrow('SHOPIFY_ACCESS_TOKEN');
+      expect(() => new ShopifyAdminService(mockTokenService)).toThrow('SHOPIFY_STORE_URL');
     });
   });
 

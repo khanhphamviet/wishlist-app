@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { GraphQLClient, gql } from 'graphql-request';
+import { ShopifyTokenService } from './shopify-token.service';
 
 const WISHLIST_NAMESPACE = 'custom';
 const WISHLIST_KEY = 'wishlist';
@@ -9,25 +10,27 @@ export class ShopifyAdminService {
   private readonly logger = new Logger(ShopifyAdminService.name);
   private readonly client: GraphQLClient;
 
-  constructor() {
+  constructor(private readonly tokenService: ShopifyTokenService) {
     const storeUrl = process.env.SHOPIFY_STORE_URL;
-    const token = process.env.SHOPIFY_ACCESS_TOKEN;
+    if (!storeUrl) throw new Error('SHOPIFY_STORE_URL must be configured in .env');
 
-    if (!storeUrl || !token) {
-      throw new Error(
-        'SHOPIFY_STORE_URL and SHOPIFY_ACCESS_TOKEN must be configured in .env',
-      );
+    this.client = new GraphQLClient(`${storeUrl}/admin/api/2026-04/graphql.json`);
+  }
+
+  private async request<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
+    const token = await this.tokenService.getToken();
+    this.client.setHeader('X-Shopify-Access-Token', token);
+
+    try {
+      return await this.client.request<T>(query, variables);
+    } catch (err: any) {
+      if (err?.response?.status === 401) {
+        const newToken = await this.tokenService.refreshToken();
+        this.client.setHeader('X-Shopify-Access-Token', newToken);
+        return await this.client.request<T>(query, variables);
+      }
+      throw err;
     }
-
-    this.client = new GraphQLClient(
-      `${storeUrl}/admin/api/2026-04/graphql.json`,
-      {
-        headers: {
-          'X-Shopify-Access-Token': token,
-          'Content-Type': 'application/json',
-        },
-      },
-    );
   }
 
   /**
@@ -45,7 +48,7 @@ export class ShopifyAdminService {
       }
     `;
 
-    const data = await this.client.request<{
+    const data = await this.request<{
       customer: { metafield: { value: string } | null } | null;
     }>(query, {
       customerId: customerGid,
@@ -86,7 +89,7 @@ export class ShopifyAdminService {
       }
     `;
 
-    const result = await this.client.request<{
+    const result = await this.request<{
       metafieldsSet: {
         userErrors: { field: string[]; message: string }[];
       };
@@ -148,7 +151,7 @@ export class ShopifyAdminService {
       }
     `;
 
-    const data = await this.client.request<{
+    const data = await this.request<{
       nodes: ({
         id: string;
         title: string;
