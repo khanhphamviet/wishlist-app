@@ -16,11 +16,6 @@ export class InstallController {
     return this.installService.install();
   }
 
-  @Post('update')
-  update() {
-    return this.installService.update();
-  }
-
   @Delete()
   uninstall() {
     return this.installService.uninstall();

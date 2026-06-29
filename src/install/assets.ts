@@ -2,21 +2,33 @@
 // Edit files in storefront/ and run: npm run sync-assets
 
 export const WISHLIST_BTN_JS = `(function () {
-  const btn = document.querySelector(".wishlist-btn[data-product-id]");
-  if (!btn) return;
+  // Event delegation — handles clicks on any matching button, even if duplicated in DOM
+  document.addEventListener('click', function (e) {
+    const wishlistBtn = e.target.closest('.wishlist-btn[data-product-id]');
+    if (wishlistBtn) { handleToggle(wishlistBtn); return; }
 
-  const productId = btn.dataset.productId;
+    const shareBtn = e.target.closest('.share-btn--overlay');
+    if (shareBtn) { handleShare(shareBtn); }
+  });
+
+  // Check initial wishlist state on load
+  const btn = document.querySelector('.wishlist-btn[data-product-id]');
+  if (btn) checkInitialState(btn.dataset.productId);
 
   function setActive(isActive) {
-    btn.classList.toggle("active", isActive);
-    btn.setAttribute("aria-pressed", String(isActive));
+    document.querySelectorAll('.wishlist-btn[data-product-id]').forEach((b) => {
+      b.classList.toggle('active', isActive);
+      b.setAttribute('aria-pressed', String(isActive));
+    });
   }
 
   function setLoading(isLoading) {
-    btn.classList.toggle("is-loading", isLoading);
+    document.querySelectorAll('.wishlist-btn[data-product-id]').forEach((b) => {
+      b.classList.toggle('is-loading', isLoading);
+    });
   }
 
-  async function checkInitialState() {
+  async function checkInitialState(productId) {
     try {
       const res = await fetch(\`/apps/wishlist/check?product_id=\${productId}\`);
       if (!res.ok) return;
@@ -27,19 +39,19 @@ export const WISHLIST_BTN_JS = `(function () {
     }
   }
 
-  async function handleToggle() {
+  async function handleToggle(btn) {
+    const productId = btn.dataset.productId;
     setLoading(true);
     try {
-      const res = await fetch("/apps/wishlist/toggle", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+      const res = await fetch('/apps/wishlist/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ product_id: productId }),
       });
 
       if (res.status === 401) {
         window.location.href =
-          "/account/login?return_url=" +
-          encodeURIComponent(window.location.pathname);
+          '/account/login?return_url=' + encodeURIComponent(window.location.pathname);
         return;
       }
 
@@ -48,15 +60,28 @@ export const WISHLIST_BTN_JS = `(function () {
       const data = await res.json();
       setActive(data.is_wishlisted);
     } catch {
-      alert("Could not update wishlist. Please try again.");
+      alert('Could not update wishlist. Please try again.');
     } finally {
       setLoading(false);
     }
   }
 
-  btn.addEventListener("click", handleToggle);
-
-  checkInitialState();
+  async function handleShare(btn) {
+    const url = window.location.href;
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = url;
+      ta.style.cssText = 'position:fixed;opacity:0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
+    btn.classList.add('copied');
+    setTimeout(() => btn.classList.remove('copied'), 2000);
+  }
 })();
 `;
 
@@ -400,6 +425,7 @@ export const WISHLIST_PAGE_LIQUID = `<style>
 `;
 
 export const WISHLIST_BTN_CSS = `
+/* wishlist-app:css-start */
 .wishlist-btn--overlay {
   position: absolute; top: 12px; right: 12px; z-index: 2;
   width: 36px; height: 36px;
@@ -412,9 +438,27 @@ export const WISHLIST_BTN_CSS = `
 .wishlist-btn--overlay .icon-heart { color: #555; transition: all 0.2s ease; }
 .wishlist-btn--overlay.active .icon-heart { fill: #e63946; stroke: #e63946; color: #e63946; }
 .wishlist-btn--overlay.is-loading { opacity: 0.6; pointer-events: none; }
+
+.share-btn--overlay {
+  position: absolute; top: 56px; right: 12px; z-index: 2;
+  width: 36px; height: 36px;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255,255,255,0.9); border: none; border-radius: 50%;
+  cursor: pointer; box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+  transition: transform 0.15s ease;
+}
+.share-btn--overlay:hover { transform: scale(1.1); }
+.share-btn--overlay .icon-share,
+.share-btn--overlay .icon-check { position: absolute; transition: opacity 0.2s ease, transform 0.2s ease; }
+.share-btn--overlay .icon-share { color: #555; opacity: 1; transform: scale(1); }
+.share-btn--overlay .icon-check { color: #22a861; opacity: 0; transform: scale(0.5); }
+.share-btn--overlay.copied { transform: scale(1.15); }
+.share-btn--overlay.copied .icon-share { opacity: 0; transform: scale(0.5); }
+.share-btn--overlay.copied .icon-check { opacity: 1; transform: scale(1); }
+/* wishlist-app:css-end */
 `;
 
-export const WISHLIST_BTN_HTML = `
+export const WISHLIST_BTN_HTML = `<!-- wishlist-app:btn-start -->
         <button
           type="button"
           class="wishlist-btn wishlist-btn--overlay"
@@ -425,7 +469,25 @@ export const WISHLIST_BTN_HTML = `
           <svg class="icon-heart" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
           </svg>
-        </button>`;
+        </button>
+        <button
+          type="button"
+          class="share-btn share-btn--overlay"
+          aria-label="Copy product link"
+        >
+          <svg class="icon-share" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="18" cy="5" r="3"/>
+            <circle cx="6" cy="12" r="3"/>
+            <circle cx="18" cy="19" r="3"/>
+            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/>
+            <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+          </svg>
+          <svg class="icon-check" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5">
+            <polyline points="20 6 9 17 4 12"/>
+          </svg>
+        </button>
+        <!-- wishlist-app:btn-end -->
+`;
 
 export const WISHLIST_PAGE_TEMPLATE_JSON = `{
   "sections": {

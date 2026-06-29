@@ -123,25 +123,67 @@ export class InstallService {
     return results;
   }
 
+  // Removes old markerless wishlist button injections (from installs before markers were added).
+  // Finds every <button ...class="wishlist-btn wishlist-btn--overlay"...>...</button> block and
+  // removes it so repeated installs don't accumulate duplicate buttons.
+  private stripOldBtnInjection(content: string): string {
+    const OPEN_PATTERN = '<button';
+    const MARKER_CLASS = 'wishlist-btn--overlay';
+    let result = content;
+    let searchFrom = 0;
+
+    while (true) {
+      const openIdx = result.indexOf(OPEN_PATTERN, searchFrom);
+      if (openIdx === -1) break;
+
+      const closeIdx = result.indexOf('</button>', openIdx);
+      if (closeIdx === -1) break;
+
+      const block = result.slice(openIdx, closeIdx + '</button>'.length);
+
+      if (block.includes(MARKER_CLASS)) {
+        result = result.slice(0, openIdx) + result.slice(closeIdx + '</button>'.length);
+        // don't advance searchFrom — next character is now at openIdx
+      } else {
+        searchFrom = closeIdx + 1;
+      }
+    }
+
+    return result;
+  }
+
+  private readonly CSS_START = '/* wishlist-app:css-start */';
+  private readonly CSS_END = '/* wishlist-app:css-end */';
+  private readonly BTN_START = '<!-- wishlist-app:btn-start -->';
+  private readonly BTN_END = '<!-- wishlist-app:btn-end -->';
+
   private async patchMainProduct(themeId: string): Promise<string> {
     const key = 'sections/main-product.liquid';
     const content = await this.getAsset(themeId, key);
     if (!content) return `Skipped: ${key} not found in theme`;
 
-    const alreadyHasButton = content.includes('wishlist-btn--overlay');
-    const alreadyHasScript = content.includes('wishlist-btn.js');
-
-    if (alreadyHasButton && alreadyHasScript) {
-      return `Skipped: ${key} already patched`;
-    }
-
     let patched = content;
 
-    if (!alreadyHasButton) {
+    // CSS — replace existing block or insert before {%- endstyle -%}
+    if (patched.includes(this.CSS_START)) {
+      const s = patched.indexOf(this.CSS_START);
+      const e = patched.indexOf(this.CSS_END) + this.CSS_END.length;
+      patched = patched.slice(0, s) + WISHLIST_BTN_CSS + patched.slice(e);
+    } else {
       patched = patched.replace('{%- endstyle -%}', `${WISHLIST_BTN_CSS}{%- endstyle -%}`);
     }
 
-    if (!alreadyHasButton) {
+    // HTML — replace existing block or insert after gallery render tag
+    if (patched.includes(this.BTN_START)) {
+      // New-style: markers present — replace between them
+      const s = patched.indexOf(this.BTN_START);
+      const e = patched.indexOf(this.BTN_END) + this.BTN_END.length;
+      patched = patched.slice(0, s) + WISHLIST_BTN_HTML + patched.slice(e);
+    } else {
+      // Old-style (no markers): strip any existing wishlist-btn injection so we
+      // don't accumulate duplicate buttons on repeated installs.
+      patched = this.stripOldBtnInjection(patched);
+
       const galleryTag = `{% render 'product-media-gallery'`;
       const idx = patched.indexOf(galleryTag);
       if (idx !== -1) {
@@ -150,7 +192,8 @@ export class InstallService {
       }
     }
 
-    if (!alreadyHasScript) {
+    // Script tag — insert once
+    if (!patched.includes('wishlist-btn.js')) {
       patched = patched.replace(
         '</product-info>',
         `  <script src="{{ 'wishlist-btn.js' | asset_url }}" defer></script>\n</product-info>`,
@@ -161,7 +204,7 @@ export class InstallService {
     return `Patched: ${key}`;
   }
 
-  private async ensureWebhook(): Promise<string> {
+  private async syncWebhook(): Promise<string> {
     const appUrl = process.env.APP_URL;
     if (!appUrl) return 'Skipped: APP_URL not set in .env';
 
@@ -171,29 +214,42 @@ export class InstallService {
       '/webhooks.json?topic=app%2Funinstalled',
     );
 
-    if (existing.webhooks.some((w) => w.address === address)) {
-      return `Skipped: webhook already registered (${address})`;
+    // Delete stale webhooks pointing at a different URL (e.g. old ngrok address)
+    for (const w of existing.webhooks) {
+      if (w.address !== address) {
+        await this.shopifyFetch(`/webhooks/${w.id}.json`, { method: 'DELETE' });
+      }
     }
 
-    await this.shopifyFetch('/webhooks.json', {
-      method: 'POST',
-      body: JSON.stringify({
-        webhook: { topic: 'app/uninstalled', address, format: 'json' },
-      }),
-    });
+    // Create if not already registered at the current address
+    if (!existing.webhooks.some((w) => w.address === address)) {
+      await this.shopifyFetch('/webhooks.json', {
+        method: 'POST',
+        body: JSON.stringify({
+          webhook: { topic: 'app/uninstalled', address, format: 'json' },
+        }),
+      });
+    }
 
-    return `Registered webhook: ${address}`;
+    return `Synced webhook: ${address}`;
   }
 
-  private async ensureWishlistPage(): Promise<string> {
+  private async syncWishlistPage(): Promise<string> {
     const data = await this.shopifyFetch<{ pages: { id: number }[] }>('/pages.json?handle=wishlist');
-    if (data.pages.length > 0) return 'Skipped: /pages/wishlist already exists';
+    const page = { title: 'Wishlist', handle: 'wishlist', template_suffix: 'wishlist' };
+
+    if (data.pages.length > 0) {
+      const pageId = data.pages[0].id;
+      await this.shopifyFetch(`/pages/${pageId}.json`, {
+        method: 'PUT',
+        body: JSON.stringify({ page }),
+      });
+      return 'Synced: /pages/wishlist';
+    }
 
     await this.shopifyFetch('/pages.json', {
       method: 'POST',
-      body: JSON.stringify({
-        page: { title: 'Wishlist', handle: 'wishlist', template_suffix: 'wishlist' },
-      }),
+      body: JSON.stringify({ page }),
     });
     return 'Created: /pages/wishlist';
   }
@@ -215,16 +271,24 @@ export class InstallService {
     const content = await this.getAsset(themeId, key);
     if (!content) return `Skipped: ${key} not found`;
 
-    const hasButton = content.includes('wishlist-btn--overlay');
+    const hasCss = content.includes(this.CSS_START);
+    const hasBtn = content.includes(this.BTN_START);
     const hasScript = content.includes('wishlist-btn.js');
 
-    if (!hasButton && !hasScript) return `Skipped: ${key} has no wishlist code`;
+    if (!hasCss && !hasBtn && !hasScript) return `Skipped: ${key} has no wishlist code`;
 
     let patched = content;
 
-    if (hasButton) {
-      patched = patched.replace(WISHLIST_BTN_CSS, '');
-      patched = patched.replace(WISHLIST_BTN_HTML, '');
+    if (hasCss) {
+      const s = patched.indexOf(this.CSS_START);
+      const e = patched.indexOf(this.CSS_END) + this.CSS_END.length;
+      patched = patched.slice(0, s) + patched.slice(e);
+    }
+
+    if (hasBtn) {
+      const s = patched.indexOf(this.BTN_START);
+      const e = patched.indexOf(this.BTN_END) + this.BTN_END.length;
+      patched = patched.slice(0, s) + patched.slice(e);
     }
 
     if (hasScript) {
@@ -254,47 +318,27 @@ export class InstallService {
     steps.push(`Active theme ID: ${themeId}`);
 
     await this.uploadAsset(themeId, 'assets/wishlist-btn.js', WISHLIST_BTN_JS);
-    steps.push('Uploaded: assets/wishlist-btn.js');
+    steps.push('Synced: assets/wishlist-btn.js');
 
     await this.uploadAsset(themeId, 'assets/wishlist-page.js', WISHLIST_PAGE_JS);
-    steps.push('Uploaded: assets/wishlist-page.js');
+    steps.push('Synced: assets/wishlist-page.js');
 
     await this.uploadAsset(themeId, 'sections/wishlist-page.liquid', WISHLIST_PAGE_LIQUID);
-    steps.push('Uploaded: sections/wishlist-page.liquid');
+    steps.push('Synced: sections/wishlist-page.liquid');
 
     await this.uploadAsset(themeId, 'templates/page.wishlist.json', WISHLIST_PAGE_TEMPLATE_JSON);
-    steps.push('Uploaded: templates/page.wishlist.json');
+    steps.push('Synced: templates/page.wishlist.json');
 
     const patchResult = await this.patchMainProduct(themeId);
     steps.push(patchResult);
 
     steps.push(...await this.mergeLocales(themeId));
 
-    const pageResult = await this.ensureWishlistPage();
+    const pageResult = await this.syncWishlistPage();
     steps.push(pageResult);
 
-    const webhookResult = await this.ensureWebhook();
+    const webhookResult = await this.syncWebhook();
     steps.push(webhookResult);
-
-    return { success: true, steps };
-  }
-
-  async update(): Promise<{ success: boolean; steps: string[] }> {
-    const steps: string[] = [];
-
-    const themeId = await this.getActiveThemeId();
-    steps.push(`Active theme ID: ${themeId}`);
-
-    await this.uploadAsset(themeId, 'assets/wishlist-btn.js', WISHLIST_BTN_JS);
-    steps.push('Updated: assets/wishlist-btn.js');
-
-    await this.uploadAsset(themeId, 'assets/wishlist-page.js', WISHLIST_PAGE_JS);
-    steps.push('Updated: assets/wishlist-page.js');
-
-    await this.uploadAsset(themeId, 'sections/wishlist-page.liquid', WISHLIST_PAGE_LIQUID);
-    steps.push('Updated: sections/wishlist-page.liquid');
-
-    steps.push(...await this.mergeLocales(themeId));
 
     return { success: true, steps };
   }

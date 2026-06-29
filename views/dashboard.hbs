@@ -61,7 +61,6 @@
     .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
 
     .btn-install   { background: #1a1a1a; color: #fff; }
-    .btn-update    { background: #2c7be5; color: #fff; }
     .btn-uninstall { background: #fff; color: #e63946; border: 1.5px solid #e63946; }
 
     .btn-icon { font-size: 1.1rem; width: 20px; text-align: center; }
@@ -150,16 +149,8 @@
       <button class="btn btn-install" onclick="run('Install', 'POST', '/install')">
         <span class="btn-icon">⚡</span>
         <span class="btn-text">
-          <span>Install</span>
-          <span class="sub">Upload assets, patch theme, create page &amp; register webhook</span>
-        </span>
-      </button>
-
-      <button class="btn btn-update" onclick="run('Update', 'POST', '/install/update')">
-        <span class="btn-icon">↑</span>
-        <span class="btn-text">
-          <span>Update</span>
-          <span class="sub">Re-upload JS and Liquid assets only</span>
+          <span>Install / Update</span>
+          <span class="sub">Sync assets, patch theme, create page &amp; register webhook</span>
         </span>
       </button>
 

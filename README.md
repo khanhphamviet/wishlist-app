@@ -169,11 +169,10 @@ All wishlist endpoints require a logged-in customer. When called through App Pro
 
 ### Install endpoints
 
-| Method   | Path              | Description                                                                   |
-| -------- | ----------------- | ----------------------------------------------------------------------------- |
-| `POST`   | `/install`        | Full install — uploads assets, patches theme, creates page, registers webhook |
-| `POST`   | `/install/update` | Re-upload JS/Liquid assets only (use after code changes)                      |
-| `DELETE` | `/install`        | Remove all theme changes                                                      |
+| Method   | Path       | Description                                                                   |
+| -------- | ---------- | ----------------------------------------------------------------------------- |
+| `POST`   | `/install` | Sync assets, patch theme, create page, register webhook (idempotent)          |
+| `DELETE` | `/install` | Remove all theme changes                                                       |
 
 ### Webhook endpoints
 
@@ -204,17 +203,74 @@ Wishlists are stored as a JSON array of Shopify product GIDs in the `custom.wish
 
 ---
 
-## 8. Production Checklist
+## 8. Deployment
 
-When moving from local to a production server:
+### 8.1 Build
 
-- [ ] Deploy the backend to a server with a public HTTPS URL
-- [ ] Update `APP_URL` in `.env` to the production URL
-- [ ] Update the **App Proxy URL** in Shopify Admin → Settings → Apps → your app → Configuration
-- [ ] Re-enable `AppProxyGuard` in `src/wishlist/wishlist.controller.ts` (currently disabled for local dev)
-- [ ] Run `POST /install` on the production server to re-register the webhook with the new URL
+```bash
+npm run build
+```
 
-> Since this is a Custom App (single store, permanent token), there is no OAuth flow or multi-store deployment needed.
+Output goes to `dist/`. The `prebuild` hook automatically syncs `storefront/` → `src/install/assets.ts` before compiling.
+
+### 8.2 Environment variables on the server
+
+Set these in `.env` (or your host's env config panel):
+
+```env
+SHOPIFY_STORE_URL=https://your-store.myshopify.com
+SHOPIFY_API_KEY=your_client_id
+SHOPIFY_API_SECRET=your_client_secret
+
+APP_URL=https://your-production-domain.com
+
+PORT=3000
+```
+
+The app fetches the Shopify access token automatically on first request — no `SHOPIFY_ACCESS_TOKEN` needed.
+
+### 8.3 Start in production
+
+```bash
+node dist/main
+```
+
+Or with PM2 for process management:
+
+```bash
+npm install -g pm2
+pm2 start dist/main.js --name wishlist-app
+pm2 save
+```
+
+### 8.4 Install / update theme assets
+
+Open the dashboard in a browser and click **Install** (or **Update** after code changes):
+
+```
+https://your-production-domain.com/install
+```
+
+Or via curl:
+
+```bash
+curl -X POST https://your-production-domain.com/install
+```
+
+### 8.5 Update storefront code
+
+1. Edit files in `storefront/`
+2. Run `npm run build` (syncs assets and compiles)
+3. Deploy `dist/` to the server
+4. Hit `POST /install` to push changes to the live theme
+
+### 8.6 Checklist
+
+- [ ] Set env vars on the server
+- [ ] Update `APP_URL` to the production URL
+- [ ] Update the **App Proxy URL** in your app → Configuration (`https://your-domain.com/wishlist`)
+- [ ] Re-enable `AppProxyGuard` in `src/wishlist/wishlist.controller.ts`
+- [ ] Run `POST /install` to upload assets and register the webhook
 
 ---
 
