@@ -16,18 +16,25 @@ export class WebhooksController {
 
   constructor(private readonly webhooksService: WebhooksService) {}
 
+  // Optional — app/uninstalled is only mandatory for App Store listings, and this app
+  // isn't published. Registered anyway (see InstallService.syncWebhook) so uninstalls
+  // are logged and trigger per-shop cleanup in WebhooksService.
   @Post('app/uninstalled')
   @HttpCode(200)
-  appUninstalled(@Req() req: FastifyRequest, @Headers('x-shopify-hmac-sha256') hmac: string) {
+  async appUninstalled(
+    @Req() req: FastifyRequest,
+    @Headers('x-shopify-hmac-sha256') hmac: string,
+    @Headers('x-shopify-shop-domain') shop: string,
+  ) {
     if (!hmac) throw new UnauthorizedException('Missing HMAC header');
+    if (!shop) throw new UnauthorizedException('Missing shop domain header');
 
     const rawBody = (req as any).rawBody as Buffer;
-    this.webhooksService.verifyHmac(rawBody, hmac);
+    // The shop must come from the header (used to pick the right secret before
+    // verification), not the body — the body is untrusted until HMAC passes.
+    await this.webhooksService.verifyHmac(shop, rawBody, hmac);
 
-    const body = req.body as { domain?: string; myshopify_domain?: string };
-    const shop = body.myshopify_domain ?? body.domain ?? 'unknown';
-
-    this.webhooksService.handleAppUninstalled(shop);
+    await this.webhooksService.handleAppUninstalled(shop);
 
     return { received: true };
   }

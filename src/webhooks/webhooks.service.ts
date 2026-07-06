@@ -1,15 +1,26 @@
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { createHmac, timingSafeEqual } from 'crypto';
+import { ShopConfigService } from '../shopify/shop-config.service';
+import { ShopifyTokenService } from '../shopify/shopify-token.service';
 
 @Injectable()
 export class WebhooksService {
   private readonly logger = new Logger(WebhooksService.name);
 
-  verifyHmac(rawBody: Buffer, hmacHeader: string): void {
-    const secret = process.env.SHOPIFY_API_SECRET;
-    if (!secret) throw new Error('SHOPIFY_API_SECRET is not configured in .env');
+  constructor(
+    private readonly shopConfigService: ShopConfigService,
+    private readonly tokenService: ShopifyTokenService,
+  ) {}
 
-    const computed = createHmac('sha256', secret).update(rawBody).digest('base64');
+  async verifyHmac(shop: string, rawBody: Buffer, hmacHeader: string): Promise<void> {
+    let apiSecret: string;
+    try {
+      apiSecret = (await this.shopConfigService.getConfig(shop)).apiSecret;
+    } catch {
+      throw new UnauthorizedException('Invalid webhook HMAC signature');
+    }
+
+    const computed = createHmac('sha256', apiSecret).update(rawBody).digest('base64');
 
     const a = Buffer.from(computed, 'utf8');
     const b = Buffer.from(hmacHeader, 'utf8');
@@ -19,10 +30,14 @@ export class WebhooksService {
     }
   }
 
-  handleAppUninstalled(shop: string): void {
+  async handleAppUninstalled(shop: string): Promise<void> {
     this.logger.log(`App uninstalled by shop: ${shop}`);
-    // Note: the access token is revoked at this point — Shopify API calls will fail.
-    // Use this handler to clean up any local records (database, cache, etc.).
+    // Not required by Shopify — app/uninstalled is only mandatory for App Store listings,
+    // and this app isn't published. Still wired in so multi-store cleanup happens:
+    // drop the cached token (revoked on uninstall anyway) and mark the shop config
+    // disabled without deleting it, so a reinstall doesn't require re-entering credentials.
+    await this.tokenService.deleteToken(shop);
+    await this.shopConfigService.markDisabled(shop);
     // Theme cleanup (JS/Liquid files) must be done via DELETE /install before uninstalling.
   }
 }

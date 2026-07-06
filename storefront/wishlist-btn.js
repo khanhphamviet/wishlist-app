@@ -38,6 +38,10 @@
 
   async function handleToggle(btn) {
     const productId = btn.dataset.productId;
+    const previousState = btn.classList.contains('active');
+
+    // Optimistic update — flip the UI immediately, reconcile with the server after.
+    setActive(!previousState);
     setLoading(true);
     try {
       const res = await fetch('/apps/wishlist/toggle', {
@@ -47,6 +51,7 @@
       });
 
       if (res.status === 401) {
+        setActive(previousState);
         window.location.href =
           '/account/login?return_url=' + encodeURIComponent(window.location.pathname);
         return;
@@ -57,6 +62,7 @@
       const data = await res.json();
       setActive(data.is_wishlisted);
     } catch {
+      setActive(previousState);
       alert('Could not update wishlist. Please try again.');
     } finally {
       setLoading(false);

@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { GraphQLClient, gql } from 'graphql-request';
+import { ShopConfigService } from './shop-config.service';
 import { ShopifyTokenService } from './shopify-token.service';
 
 const WISHLIST_NAMESPACE = 'custom';
@@ -8,26 +9,41 @@ const WISHLIST_KEY = 'wishlist';
 @Injectable()
 export class ShopifyAdminService {
   private readonly logger = new Logger(ShopifyAdminService.name);
-  private readonly client: GraphQLClient;
+  private readonly clients = new Map<string, GraphQLClient>();
 
-  constructor(private readonly tokenService: ShopifyTokenService) {
-    const storeUrl = process.env.SHOPIFY_STORE_URL;
-    if (!storeUrl) throw new Error('SHOPIFY_STORE_URL must be configured in .env');
+  constructor(
+    private readonly tokenService: ShopifyTokenService,
+    private readonly shopConfigService: ShopConfigService,
+  ) {}
 
-    this.client = new GraphQLClient(`${storeUrl}/admin/api/2026-04/graphql.json`);
+  private async getClient(shop: string): Promise<GraphQLClient> {
+    const existing = this.clients.get(shop);
+    if (existing) return existing;
+
+    const { storeUrl } = await this.shopConfigService.getConfig(shop);
+    const client = new GraphQLClient(`${storeUrl}/admin/api/2026-04/graphql.json`);
+    this.clients.set(shop, client);
+    return client;
   }
 
-  private async request<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
-    const token = await this.tokenService.getToken();
-    this.client.setHeader('X-Shopify-Access-Token', token);
+  private async request<T>(
+    shop: string,
+    query: string,
+    variables?: Record<string, unknown>,
+  ): Promise<T> {
+    const client = await this.getClient(shop);
+    const token = await this.tokenService.getToken(shop);
 
     try {
-      return await this.client.request<T>(query, variables);
+      return await client.request<T>(query, variables, {
+        'X-Shopify-Access-Token': token,
+      });
     } catch (err: any) {
       if (err?.response?.status === 401) {
-        const newToken = await this.tokenService.refreshToken();
-        this.client.setHeader('X-Shopify-Access-Token', newToken);
-        return await this.client.request<T>(query, variables);
+        const newToken = await this.tokenService.refreshToken(shop);
+        return await client.request<T>(query, variables, {
+          'X-Shopify-Access-Token': newToken,
+        });
       }
       throw err;
     }
@@ -37,7 +53,7 @@ export class ShopifyAdminService {
    * Returns the list of product IDs saved in the customer's wishlist metafield.
    * Returns [] if the customer has no wishlist metafield yet.
    */
-  async getWishlistProductIds(customerGid: string): Promise<string[]> {
+  async getWishlistProductIds(shop: string, customerGid: string): Promise<string[]> {
     const query = gql`
       query GetWishlist($customerId: ID!, $namespace: String!, $key: String!) {
         customer(id: $customerId) {
@@ -50,7 +66,7 @@ export class ShopifyAdminService {
 
     const data = await this.request<{
       customer: { metafield: { value: string } | null } | null;
-    }>(query, {
+    }>(shop, query, {
       customerId: customerGid,
       namespace: WISHLIST_NAMESPACE,
       key: WISHLIST_KEY,
@@ -71,7 +87,11 @@ export class ShopifyAdminService {
   /**
    * Overwrites the customer's wishlist metafield with the given list of product IDs.
    */
-  async setWishlistProductIds(customerGid: string, productIds: string[]): Promise<void> {
+  async setWishlistProductIds(
+    shop: string,
+    customerGid: string,
+    productIds: string[],
+  ): Promise<void> {
     const mutation = gql`
       mutation SetWishlist($metafields: [MetafieldsSetInput!]!) {
         metafieldsSet(metafields: $metafields) {
@@ -90,7 +110,7 @@ export class ShopifyAdminService {
       metafieldsSet: {
         userErrors: { field: string[]; message: string }[];
       };
-    }>(mutation, {
+    }>(shop, mutation, {
       metafields: [
         {
           ownerId: customerGid,
@@ -112,7 +132,10 @@ export class ShopifyAdminService {
   /**
    * Fetches display information (title, handle, image, price) for multiple products.
    */
-  async getProductsByIds(productGids: string[]): Promise<
+  async getProductsByIds(
+    shop: string,
+    productGids: string[],
+  ): Promise<
     {
       id: string;
       title: string;
@@ -156,7 +179,7 @@ export class ShopifyAdminService {
           minVariantPrice: { amount: string; currencyCode: string };
         };
       } | null)[];
-    }>(query, { ids: productGids });
+    }>(shop, query, { ids: productGids });
 
     return data.nodes
       .filter((n) => n !== null)

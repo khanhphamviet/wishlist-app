@@ -2,6 +2,10 @@
   "name": "wishlist-app",
   "version": "1.0.0",
   "description": "Custom Shopify Wishlist App - NestJS + Fastify",
+  "main": "dist/firebase-entry.js",
+  "engines": {
+    "node": "20"
+  },
   "scripts": {
     "prebuild": "node scripts/sync-assets.js",
     "build": "nest build",
@@ -11,11 +15,14 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "sync-assets": "node scripts/sync-assets.js",
+    "add-shop": "node scripts/add-shop.js",
+    "install-all-shops": "node scripts/install-all-shops.js",
+    "sign-app-proxy-request": "node scripts/sign-app-proxy-request.js",
     "lint": "eslint \"src/**/*.ts\"",
     "lint:fix": "eslint \"src/**/*.ts\" --fix",
     "format": "prettier --write \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\"",
-    "prepare": "husky"
+    "prepare": "husky || true"
   },
   "jest": {
     "moduleFileExtensions": [
@@ -41,6 +48,8 @@
     "@nestjs/core": "^11.0.0",
     "@nestjs/platform-fastify": "^11.0.0",
     "fastify": "^5.2.0",
+    "firebase-admin": "^13.10.0",
+    "firebase-functions": "^7.2.5",
     "graphql-request": "^7.1.2",
     "handlebars": "^4.7.9",
     "reflect-metadata": "^0.2.2",

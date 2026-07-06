@@ -1,4 +1,5 @@
 import { Logger } from '@nestjs/common';
+import { ShopConfigService } from './shop-config.service';
 import { ShopifyAdminService } from './shopify-admin.service';
 import { ShopifyTokenService } from './shopify-token.service';
 
@@ -6,13 +7,13 @@ jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
 jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
 jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
 
+const SHOP = 'khazhjp.myshopify.com';
+
 const mockRequest = jest.fn();
-const mockSetHeader = jest.fn();
 
 jest.mock('graphql-request', () => ({
   GraphQLClient: jest.fn().mockImplementation(() => ({
     request: mockRequest,
-    setHeader: mockSetHeader,
   })),
   gql: (strings: TemplateStringsArray, ...values: unknown[]) =>
     strings.raw.reduce((acc, str, i) => acc + str + (values[i] ?? ''), ''),
@@ -23,25 +24,22 @@ const mockTokenService = {
   refreshToken: jest.fn().mockResolvedValue('shpat_refreshed'),
 } as unknown as ShopifyTokenService;
 
+const mockShopConfigService = {
+  getConfig: jest.fn().mockResolvedValue({
+    shop: SHOP,
+    storeUrl: `https://${SHOP}`,
+    apiKey: 'key',
+    apiSecret: 'secret',
+  }),
+} as unknown as ShopConfigService;
+
 describe('ShopifyAdminService', () => {
   let service: ShopifyAdminService;
 
   beforeEach(() => {
-    process.env.SHOPIFY_STORE_URL = 'https://khazhjp.myshopify.com';
     mockRequest.mockReset();
-    mockSetHeader.mockReset();
-    service = new ShopifyAdminService(mockTokenService);
-  });
-
-  afterEach(() => {
-    delete process.env.SHOPIFY_STORE_URL;
-  });
-
-  describe('constructor', () => {
-    it('throws if SHOPIFY_STORE_URL is missing', () => {
-      delete process.env.SHOPIFY_STORE_URL;
-      expect(() => new ShopifyAdminService(mockTokenService)).toThrow('SHOPIFY_STORE_URL');
-    });
+    (mockShopConfigService.getConfig as jest.Mock).mockClear();
+    service = new ShopifyAdminService(mockTokenService, mockShopConfigService);
   });
 
   describe('getWishlistProductIds', () => {
@@ -51,19 +49,20 @@ describe('ShopifyAdminService', () => {
         customer: { metafield: { value: JSON.stringify(ids) } },
       });
 
-      const result = await service.getWishlistProductIds('gid://shopify/Customer/1');
+      const result = await service.getWishlistProductIds(SHOP, 'gid://shopify/Customer/1');
       expect(result).toEqual(ids);
+      expect(mockShopConfigService.getConfig).toHaveBeenCalledWith(SHOP);
     });
 
     it('returns [] when customer has no metafield', async () => {
       mockRequest.mockResolvedValue({ customer: { metafield: null } });
-      const result = await service.getWishlistProductIds('gid://shopify/Customer/1');
+      const result = await service.getWishlistProductIds(SHOP, 'gid://shopify/Customer/1');
       expect(result).toEqual([]);
     });
 
     it('returns [] when customer is null', async () => {
       mockRequest.mockResolvedValue({ customer: null });
-      const result = await service.getWishlistProductIds('gid://shopify/Customer/1');
+      const result = await service.getWishlistProductIds(SHOP, 'gid://shopify/Customer/1');
       expect(result).toEqual([]);
     });
 
@@ -71,7 +70,7 @@ describe('ShopifyAdminService', () => {
       mockRequest.mockResolvedValue({
         customer: { metafield: { value: 'not-json' } },
       });
-      const result = await service.getWishlistProductIds('gid://shopify/Customer/1');
+      const result = await service.getWishlistProductIds(SHOP, 'gid://shopify/Customer/1');
       expect(result).toEqual([]);
     });
 
@@ -79,7 +78,7 @@ describe('ShopifyAdminService', () => {
       mockRequest.mockResolvedValue({
         customer: { metafield: { value: JSON.stringify({ foo: 'bar' }) } },
       });
-      const result = await service.getWishlistProductIds('gid://shopify/Customer/1');
+      const result = await service.getWishlistProductIds(SHOP, 'gid://shopify/Customer/1');
       expect(result).toEqual([]);
     });
   });
@@ -90,7 +89,9 @@ describe('ShopifyAdminService', () => {
         metafieldsSet: { userErrors: [] },
       });
       await expect(
-        service.setWishlistProductIds('gid://shopify/Customer/1', ['gid://shopify/Product/1']),
+        service.setWishlistProductIds(SHOP, 'gid://shopify/Customer/1', [
+          'gid://shopify/Product/1',
+        ]),
       ).resolves.toBeUndefined();
     });
 
@@ -98,15 +99,15 @@ describe('ShopifyAdminService', () => {
       mockRequest.mockResolvedValue({
         metafieldsSet: { userErrors: [{ field: ['value'], message: 'Invalid value' }] },
       });
-      await expect(service.setWishlistProductIds('gid://shopify/Customer/1', [])).rejects.toThrow(
-        'Invalid value',
-      );
+      await expect(
+        service.setWishlistProductIds(SHOP, 'gid://shopify/Customer/1', []),
+      ).rejects.toThrow('Invalid value');
     });
 
     it('sends the correct product IDs as JSON', async () => {
       mockRequest.mockResolvedValue({ metafieldsSet: { userErrors: [] } });
       const ids = ['gid://shopify/Product/1', 'gid://shopify/Product/2'];
-      await service.setWishlistProductIds('gid://shopify/Customer/1', ids);
+      await service.setWishlistProductIds(SHOP, 'gid://shopify/Customer/1', ids);
 
       const [, variables] = mockRequest.mock.calls[0];
       expect(JSON.parse(variables.metafields[0].value)).toEqual(ids);
@@ -115,7 +116,7 @@ describe('ShopifyAdminService', () => {
 
   describe('getProductsByIds', () => {
     it('returns [] immediately for empty input', async () => {
-      const result = await service.getProductsByIds([]);
+      const result = await service.getProductsByIds(SHOP, []);
       expect(result).toEqual([]);
       expect(mockRequest).not.toHaveBeenCalled();
     });
@@ -133,7 +134,7 @@ describe('ShopifyAdminService', () => {
         ],
       });
 
-      const result = await service.getProductsByIds(['gid://shopify/Product/1']);
+      const result = await service.getProductsByIds(SHOP, ['gid://shopify/Product/1']);
       expect(result).toEqual([
         {
           id: 'gid://shopify/Product/1',
@@ -160,13 +161,13 @@ describe('ShopifyAdminService', () => {
         ],
       });
 
-      const result = await service.getProductsByIds(['gid://shopify/Product/2']);
+      const result = await service.getProductsByIds(SHOP, ['gid://shopify/Product/2']);
       expect(result[0].image).toBeNull();
     });
 
     it('filters out null nodes', async () => {
       mockRequest.mockResolvedValue({ nodes: [null, null] });
-      const result = await service.getProductsByIds([
+      const result = await service.getProductsByIds(SHOP, [
         'gid://shopify/Product/1',
         'gid://shopify/Product/2',
       ]);

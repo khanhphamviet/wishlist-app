@@ -60,6 +60,9 @@
     const productId = e.currentTarget.dataset.productId;
     const card = grid.querySelector(`.wishlist-card[data-product-id="${productId}"]`);
 
+    // Optimistic update — hide the card immediately, reconcile with the server after.
+    card.style.display = 'none';
+
     try {
       const res = await fetch('/apps/wishlist/toggle', {
         method: 'POST',
@@ -73,6 +76,7 @@
 
       if (grid.children.length === 0) emptyEl.style.display = 'flex';
     } catch {
+      card.style.display = '';
       alert('Could not remove product. Please try again.');
     }
   }

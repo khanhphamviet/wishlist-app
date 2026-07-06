@@ -3,3 +3,7 @@ dist
 node_modules
 .env
 src/install/assets.ts
+firestore-debug.log
+ui-debug.log
+firebase-debug.log
+.firebase

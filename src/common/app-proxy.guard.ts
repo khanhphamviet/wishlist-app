@@ -1,6 +1,7 @@
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { FastifyRequest } from 'fastify';
+import { ShopConfigService } from '../shopify/shop-config.service';
 
 /**
  * Verifies that requests genuinely originate from the Shopify App Proxy.
@@ -11,23 +12,33 @@ import { FastifyRequest } from 'fastify';
  *
  *   key1=value1key2=value2...
  *
+ * Multi-store: the App Secret is per-shop, so the (untrusted) `shop` query
+ * param must be resolved to a shop config first, then verified against that
+ * shop's secret. Unknown-shop and bad-signature failures use the same
+ * generic message so a caller can't distinguish the two.
+ *
  * Reference: https://shopify.dev/docs/apps/build/online-store/display-dynamic-data#calculate-a-digital-signature
  */
 @Injectable()
 export class AppProxyGuard implements CanActivate {
-  canActivate(context: ExecutionContext): boolean {
+  constructor(private readonly shopConfigService: ShopConfigService) {}
+
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest<FastifyRequest>();
     const query = { ...(req.query as Record<string, string>) };
 
     const signature = query.signature;
-    if (!signature) {
-      throw new UnauthorizedException('Missing signature');
+    const shop = query.shop;
+    if (!signature || !shop) {
+      throw new UnauthorizedException('Invalid signature');
     }
     delete query.signature;
 
-    const secret = process.env.SHOPIFY_API_SECRET;
-    if (!secret) {
-      throw new Error('SHOPIFY_API_SECRET is not configured in .env');
+    let apiSecret: string;
+    try {
+      apiSecret = (await this.shopConfigService.getConfig(shop)).apiSecret;
+    } catch {
+      throw new UnauthorizedException('Invalid signature');
     }
 
     // Sort keys alphabetically and concatenate "key=value" pairs with no separator
@@ -36,7 +47,7 @@ export class AppProxyGuard implements CanActivate {
       .map((key) => `${key}=${query[key]}`)
       .join('');
 
-    const computedSignature = createHmac('sha256', secret).update(sortedParams).digest('hex');
+    const computedSignature = createHmac('sha256', apiSecret).update(sortedParams).digest('hex');
 
     const isValid = this.safeCompare(computedSignature, signature);
 
@@ -44,9 +55,9 @@ export class AppProxyGuard implements CanActivate {
       throw new UnauthorizedException('Invalid signature');
     }
 
-    // Attach customer_id (if logged in) to the request for use in controllers
+    // Attach customer_id (if logged in) and shop to the request for use in controllers
     (req as any).shopifyCustomerId = query.logged_in_customer_id || null;
-    (req as any).shopDomain = query.shop || null;
+    (req as any).shopDomain = shop;
 
     return true;
   }
