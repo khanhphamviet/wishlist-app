@@ -82,6 +82,22 @@ node scripts/add-shop.js <shop>.myshopify.com <apiKey> <apiSecret>
 
 This needs Firestore credentials in your environment — either `GOOGLE_APPLICATION_CREDENTIALS` pointing at a service account key, or `FIRESTORE_EMULATOR_HOST=localhost:8080` against a local emulator. Re-run the script (it upserts) to rotate a secret or fix a typo.
 
+### 3.1 Onboarding a new store — end to end
+
+Once the backend is already deployed (Section 9), adding another store means repeating the per-shop setup above against that store's own Shopify Admin:
+
+1. **Create a custom app** for that store and get its `apiKey`/`apiSecret` (Section 1)
+2. **Confirm the shop domain** — use the store's actual `*.myshopify.com` permanent domain (Settings → Domains in that store's Admin), not a custom/renamed domain a merchant might browse under. App Proxy and webhooks always send the permanent domain, and a mismatch here causes every request to fail with a generic 401 (same message as a bad signature, by design — see `AppProxyGuard`).
+3. **Seed Firestore** for that shop:
+   ```bash
+   GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json \
+   node scripts/add-shop.js <shop>.myshopify.com <apiKey> <apiSecret>
+   ```
+   or in one step together with deploy: `./scripts/deploy.sh --seed-shop <shop>.myshopify.com <apiKey> <apiSecret> --install` (Section 9.1)
+4. **Configure App Proxy** in that store's app → Configuration (Section 2) — same Proxy URL as every other store
+5. **Run `/install`** for that shop to push theme assets, if you didn't already via `--install` above (Section 5)
+6. Check `install_logs` in Firestore to confirm the run succeeded for that shop
+
 ---
 
 ## 4. Local Development
@@ -170,6 +186,8 @@ Example response:
 
 You can also do this from the browser dashboard: `http://localhost:3000/install?shop=<shop>.myshopify.com&key=<INSTALL_SECRET>` — see Section 8.4.
 
+Every `/install` and `/uninstall` run (success or failure) is also logged to Firestore, collection `install_logs` — one document per run with `shop`, `action`, `success`, `steps`, `error`, and `timestamp`. Useful for auditing which shops got the latest storefront assets, especially once updates are pushed to every shop automatically (Section 9.2).
+
 ---
 
 ## 6. Uninstall Theme Assets
@@ -199,24 +217,24 @@ curl "http://localhost:3000/wishlist/list?$QS"
 ```
 
 | Method | Path                              | Description                                                |
-| ------ | --------------------------------- | ------------------------------------------------------------ |
+| ------ | --------------------------------- | ---------------------------------------------------------- |
 | `GET`  | `/wishlist/list`                  | Returns full product details for all wishlisted items      |
-| `GET`  | `/wishlist/check?product_id=<id>` | Returns `{ is_wishlisted: boolean }`                        |
-| `POST` | `/wishlist/toggle`                | Adds or removes a product; body: `{ "product_id": "123" }`  |
+| `GET`  | `/wishlist/check?product_id=<id>` | Returns `{ is_wishlisted: boolean }`                       |
+| `POST` | `/wishlist/toggle`                | Adds or removes a product; body: `{ "product_id": "123" }` |
 
 ### Install endpoints
 
 Require `?shop=<shop>.myshopify.com` and an `x-install-secret` header (or `?key=`) matching `INSTALL_SECRET`.
 
-| Method   | Path       | Description                                                           |
-| -------- | ---------- | ----------------------------------------------------------------------- |
-| `POST`   | `/install` | Sync assets, patch theme, create page, register webhook (idempotent)  |
-| `DELETE` | `/install` | Remove all theme changes                                              |
+| Method   | Path       | Description                                                          |
+| -------- | ---------- | -------------------------------------------------------------------- |
+| `POST`   | `/install` | Sync assets, patch theme, create page, register webhook (idempotent) |
+| `DELETE` | `/install` | Remove all theme changes                                             |
 
 ### Webhook endpoints
 
 | Method | Path                        | Description                                           |
-| ------ | --------------------------- | ------------------------------------------------------ |
+| ------ | --------------------------- | ----------------------------------------------------- |
 | `POST` | `/webhooks/app/uninstalled` | Shopify fires this when a merchant uninstalls the app |
 
 ---
@@ -245,70 +263,95 @@ Wishlists are stored as a JSON array of Shopify product GIDs in the `custom.wish
 
 ## 9. Deployment
 
-### 9.1 Build
+The app is deployed as a Firebase Cloud Function — there's no supported plain-Node-process deployment path. `firebase.json`'s `predeploy` hook runs `npm run build` (which syncs `storefront/` → `src/install/assets.ts`, then compiles) automatically on every deploy, so there's no manual build step.
 
-```bash
-npm run build
-```
+### 9.1 Firebase Cloud Functions + Hosting
 
-Output goes to `dist/`. The `prebuild` hook automatically syncs `storefront/` → `src/install/assets.ts` before compiling.
+`src/firebase-entry.ts` exports an `onRequest` Cloud Function (`api`) that runs the same Nest+Fastify app, reused across warm invocations. `firebase.json` rewrites all Hosting traffic to it (runtime: Node 22, 2nd gen).
 
-There are two ways to run the built app:
+#### One-time project setup
 
-### 9.2 Option A — plain Node process
+1. Create a **dedicated Firebase project** for this app rather than reusing one that already runs unrelated services — Cloud Run's IAM (public invoker access) and Hosting's rewrite rules (`"source": "**"`) apply project/site-wide, so sharing a project with another app risks locking it down or hijacking its routes.
+2. Upgrade the project to the **Blaze plan** (required for Cloud Functions v2). You can reuse the same billing account/card across multiple projects — no extra cost until usage exceeds the free tier.
+3. Create the Firestore database (Console → Build → Firestore Database → Create database → production mode), then publish `firestore.rules` (deny-all — Firestore is server-only via the Admin SDK).
+4. Set `.firebaserc`'s `default` project id to your real project id.
+5. Generate a service account key (Console → Project settings → Service accounts → Generate new private key) — needed for `GOOGLE_APPLICATION_CREDENTIALS` when seeding shops or running `install-all-shops.js` against production Firestore.
+6. **Allow public invocations on the deployed function** — after the first deploy, go to Cloud Run Console → service `api` → **Security** tab → set Authentication to **"Allow public access"**. Firebase CLI doesn't always grant this automatically; without it every request 403s with a generic "Forbidden" page before it ever reaches the app. Actual auth is still enforced at the application layer (`INSTALL_SECRET`, per-shop HMAC), so this only opens the door for requests to reach that layer.
+7. If deploying via CI (Cloud Build under the hood needs to impersonate the runtime service account), grant your deploying identity the **Service Account User** role (`roles/iam.serviceAccountUser`) on `<project-id>@appspot.gserviceaccount.com` — IAM & Admin → IAM → find the identity → Edit → Add role.
+
+#### Deploy
 
 ```env
-APP_URL=https://your-production-domain.com
-PORT=3000
+# .env — loaded both by `npm run start:dev` locally AND by Cloud Functions at deploy
+# time (firebase-functions v2 auto-loads .env into the deployed function's env vars).
+# Do NOT put PORT here — it's reserved by Cloud Run/Cloud Functions internally.
+APP_URL=https://<project-id>.web.app   # the Hosting URL, once deployed — see below
 INSTALL_SECRET=some-long-random-string
-GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
 ```
 
-```bash
-node dist/main
-```
-
-Or with PM2:
-
-```bash
-npm install -g pm2
-pm2 start dist/main.js --name wishlist-app
-pm2 save
-```
-
-### 9.3 Option B — Firebase Cloud Functions + Hosting
-
-`src/firebase-entry.ts` exports an `onRequest` Cloud Function (`api`) that runs the same Nest+Fastify app, reused across warm invocations. `firebase.json` rewrites all Hosting traffic to it.
+`APP_URL` should point at the **Hosting URL** (`https://<project-id>.web.app`), not the raw Cloud Run URL — Hosting is what App Proxy/webhooks should hit, and it's what supports attaching a custom domain later without re-touching Shopify config. You won't know it until after the first deploy; a placeholder is fine for the first run.
 
 ```bash
 npm install -g firebase-tools
 firebase login
+./scripts/deploy.sh
 ```
 
-1. Set your project id in `.firebaserc` (replace `REPLACE_WITH_FIREBASE_PROJECT_ID`)
-2. Set Cloud Functions config/env: `APP_URL` (the Hosting/custom domain) and `INSTALL_SECRET` — via `firebase functions:secrets:set` or your project's runtime env config. Firestore access uses the function's default service account automatically (no `GOOGLE_APPLICATION_CREDENTIALS` needed in this mode).
-3. Deploy:
-   ```bash
-   firebase deploy
-   ```
-4. Firebase Hosting → **Add custom domain**, then follow the DNS/SSL steps in the console.
+[`scripts/deploy.sh`](scripts/deploy.sh) wraps `firebase deploy --only functions,hosting,firestore:rules --non-interactive` and adds a few flags:
 
-The `preParsing` hook in `src/bootstrap.ts` handles a Cloud Functions–specific quirk: `onRequest` pre-buffers the body as `req.rawBody` before Fastify sees it, so the hook reuses those bytes for webhook/App-Proxy HMAC verification instead of re-reading an already-consumed stream. Verify this against the Firebase emulator (`firebase emulators:start`) or a real deployed webhook before relying on it in production — it's the one part of this setup that can't be confirmed by local unit tests alone.
+| Flag                                      | Effect                                                                                                                                                       |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| _(none)_                                  | Deploy only                                                                                                                                                  |
+| `--seed-shop <shop> <apiKey> <apiSecret>` | Deploy, then seed/update `shops/<shop>` in Firestore (needs `GOOGLE_APPLICATION_CREDENTIALS`)                                                                |
+| `--install`                               | (with `--seed-shop`) also calls `POST /install` for that one shop (needs `APP_URL`, `INSTALL_SECRET`)                                                        |
+| `--install-all`                           | Deploy, then call `POST /install` for **every** non-disabled shop already in Firestore (needs `GOOGLE_APPLICATION_CREDENTIALS`, `APP_URL`, `INSTALL_SECRET`) |
 
-### 9.4 Update storefront code
+Example — deploy and push the update to every configured store in one go:
+
+```bash
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json \
+APP_URL=https://<project-id>.web.app \
+INSTALL_SECRET=some-long-random-string \
+  ./scripts/deploy.sh --install-all
+```
+
+The `preParsing` hook in `src/bootstrap.ts` handles a Cloud Functions–specific quirk: `onRequest` pre-buffers the body as `req.rawBody` before Fastify sees it, so the hook reuses those bytes for webhook/App-Proxy HMAC verification instead of re-reading an already-consumed stream. Verify this against a real deployed webhook before relying on it in production — it's the one part of this setup that can't be confirmed by local unit tests alone.
+
+### 9.2 Update storefront code
+
+Theme Assets API **copies** files into the theme at the moment `/install` is called — there's no live sync, so any `storefront/` change needs a fresh `/install` call per shop to actually reach a live store.
+
+Manual (single shop):
 
 1. Edit files in `storefront/`
-2. Run `npm run build` (syncs assets and compiles)
-3. Deploy `dist/` (or redeploy the Cloud Function)
-4. Hit `POST /install?shop=<shop>` for each shop to push changes to its live theme
+2. `npm run sync-assets` (regenerates `src/install/assets.ts` — never edit that file by hand)
+3. Deploy (`./scripts/deploy.sh`)
+4. `curl -X POST ".../install?shop=<shop>" -H "x-install-secret: ..."` for each shop that needs the update
 
-### 9.5 Checklist
+Automated (all shops, no manual step per shop): use `./scripts/deploy.sh --install-all` (Section 9.1), or push to `main` and let CI/CD do it — see Section 9.4.
+
+### 9.3 Checklist
 
 - [ ] Seed a `shops/{shopDomain}` Firestore doc for each store (`node scripts/add-shop.js`)
 - [ ] Set `INSTALL_SECRET` and `APP_URL` for the deployed environment
 - [ ] Update the **App Proxy URL** in each store's app → Configuration (`https://your-domain.com/wishlist`)
-- [ ] Run `POST /install?shop=<shop>` (with `x-install-secret`) for each shop to upload assets and register the webhook
-- [ ] If using Firebase: custom domain connected, `firestore.rules` deployed (deny-all client access), and the raw-body webhook path verified against a real request
+- [ ] Run `POST /install?shop=<shop>` (with `x-install-secret`) for each shop to upload assets and register the webhook, or `./scripts/deploy.sh --install-all` to cover every shop at once
+- [ ] If using Firebase: custom domain connected, `firestore.rules` deployed (deny-all client access), Cloud Run service set to "Allow public access", and the raw-body webhook path verified against a real request
+
+### 9.4 CI/CD (GitHub Actions)
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs `lint` → `test` → `build` on every push/PR. On a push to `main` where all three pass, a `deploy` job runs `./scripts/deploy.sh --install-all` automatically — every push to `main` deploys and pushes the latest storefront assets to every configured shop, with no manual step.
+
+Requires these repository secrets (Settings → Secrets and variables → Actions):
+
+| Secret                     | How to get it                                                                                                                                                                                                                                                                |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FIREBASE_SERVICE_ACCOUNT` | Full JSON contents of a service account key (Section 9.1 step 5) — used by `google-github-actions/auth` to authenticate the Admin SDK (Firestore access for seeding/listing shops)                                                                                           |
+| `FIREBASE_TOKEN`           | Output of `firebase login:ci` (or `firebase login:ci --no-localhost` if the browser can't redirect back to the CLI) — used specifically for the `firebase deploy` command itself, since it doesn't reliably pick up service-account-based auth the way `firebase-admin` does |
+| `APP_URL`                  | The Hosting URL (or custom domain)                                                                                                                                                                                                                                           |
+| `INSTALL_SECRET`           | Same value as in your deployed `.env`                                                                                                                                                                                                                                        |
+
+The service account behind `FIREBASE_SERVICE_ACCOUNT` also needs the **Service Account User** role (Section 9.1 step 7) for the Cloud Functions build step to succeed.
 
 ---
 
@@ -326,7 +369,12 @@ storefront/                         # Source of truth — edit these, then run n
 scripts/
 ├── sync-assets.js                  # Reads storefront/ and regenerates src/install/assets.ts
 ├── add-shop.js                     # Seeds/updates a shops/{shop} Firestore doc
-└── sign-app-proxy-request.js       # Signs App Proxy query params for local curl testing
+├── sign-app-proxy-request.js       # Signs App Proxy query params for local curl testing
+├── deploy.sh                       # Wraps `firebase deploy` + optional shop seed / install / install-all
+└── install-all-shops.js            # Calls POST /install for every non-disabled shop in Firestore
+
+.github/workflows/
+└── ci.yml                          # Lint/test/build on every push+PR; deploy + install-all on push to main
 
 src/
 ├── bootstrap.ts                    # Builds the Nest+Fastify app (shared by main.ts and firebase-entry.ts)
