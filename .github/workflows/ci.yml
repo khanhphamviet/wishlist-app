@@ -91,4 +91,5 @@ jobs:
         env:
           APP_URL: ${{ secrets.APP_URL }}
           INSTALL_SECRET: ${{ secrets.INSTALL_SECRET }}
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
         run: ./scripts/deploy.sh --install-all

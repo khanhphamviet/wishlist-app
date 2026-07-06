@@ -4,7 +4,7 @@
   "description": "Custom Shopify Wishlist App - NestJS + Fastify",
   "main": "dist/firebase-entry.js",
   "engines": {
-    "node": "20"
+    "node": "22"
   },
   "scripts": {
     "prebuild": "node scripts/sync-assets.js",

@@ -78,7 +78,15 @@ fi
 echo "==> Deploying functions, hosting, and Firestore rules"
 # --non-interactive: needed for CI, and avoids getting stuck on prompts locally
 # (e.g. "how many days to keep container images") — always picks defaults.
-firebase deploy --only functions,hosting,firestore:rules --non-interactive
+# FIREBASE_TOKEN (from `firebase login:ci`) is used in CI, where interactive
+# login / GOOGLE_APPLICATION_CREDENTIALS-based ADC isn't reliably picked up
+# by the `firebase deploy` command itself (unlike firebase-admin, which does
+# support GOOGLE_APPLICATION_CREDENTIALS fine for Firestore access).
+if [[ -n "${FIREBASE_TOKEN:-}" ]]; then
+  firebase deploy --only functions,hosting,firestore:rules --non-interactive --token "$FIREBASE_TOKEN"
+else
+  firebase deploy --only functions,hosting,firestore:rules --non-interactive
+fi
 
 if $SEED_SHOP; then
   if [[ -z "$SHOP" || -z "$SHOP_API_KEY" || -z "$SHOP_API_SECRET" ]]; then
