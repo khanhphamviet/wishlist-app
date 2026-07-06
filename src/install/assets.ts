@@ -41,6 +41,10 @@ export const WISHLIST_BTN_JS = `(function () {
 
   async function handleToggle(btn) {
     const productId = btn.dataset.productId;
+    const previousState = btn.classList.contains('active');
+
+    // Optimistic update — flip the UI immediately, reconcile with the server after.
+    setActive(!previousState);
     setLoading(true);
     try {
       const res = await fetch('/apps/wishlist/toggle', {
@@ -50,6 +54,7 @@ export const WISHLIST_BTN_JS = `(function () {
       });
 
       if (res.status === 401) {
+        setActive(previousState);
         window.location.href =
           '/account/login?return_url=' + encodeURIComponent(window.location.pathname);
         return;
@@ -60,6 +65,7 @@ export const WISHLIST_BTN_JS = `(function () {
       const data = await res.json();
       setActive(data.is_wishlisted);
     } catch {
+      setActive(previousState);
       alert('Could not update wishlist. Please try again.');
     } finally {
       setLoading(false);
@@ -147,6 +153,9 @@ export const WISHLIST_PAGE_JS = `(function () {
     const productId = e.currentTarget.dataset.productId;
     const card = grid.querySelector(\`.wishlist-card[data-product-id="\${productId}"]\`);
 
+    // Optimistic update — hide the card immediately, reconcile with the server after.
+    card.style.display = 'none';
+
     try {
       const res = await fetch('/apps/wishlist/toggle', {
         method: 'POST',
@@ -160,6 +169,7 @@ export const WISHLIST_PAGE_JS = `(function () {
 
       if (grid.children.length === 0) emptyEl.style.display = 'flex';
     } catch {
+      card.style.display = '';
       alert('Could not remove product. Please try again.');
     }
   }

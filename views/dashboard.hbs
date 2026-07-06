@@ -178,6 +178,8 @@
   </div>
 
   <script>
+    const SHOP = "{{shop}}";
+    const KEY = "{{key}}";
     let running = false;
 
     function setRunning(state) {
@@ -211,7 +213,11 @@
       showOutput(label);
 
       try {
-        const res = await fetch(path, { method });
+        const url = path + '?shop=' + encodeURIComponent(SHOP);
+        const res = await fetch(url, {
+          method,
+          headers: { 'x-install-secret': KEY },
+        });
         const data = await res.json();
 
         if (data.steps) {

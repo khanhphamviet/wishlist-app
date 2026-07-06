@@ -1,4 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { getApps, initializeApp } from 'firebase-admin/app';
+import { getFirestore } from 'firebase-admin/firestore';
+import { ShopConfigService } from '../shopify/shop-config.service';
 import { ShopifyTokenService } from '../shopify/shopify-token.service';
 import {
   WISHLIST_BTN_CSS,
@@ -20,16 +23,60 @@ const LOCALES = [
   { key: 'locales/ko.json', content: () => WISHLIST_LOCALE_KO },
 ];
 
+/**
+ * Per-call store context. Passed explicitly through every helper instead of
+ * held as instance state — InstallService is a singleton provider, and
+ * concurrent installs for different shops interleave across many awaited
+ * Shopify calls, so shop context can never live on `this`.
+ */
+interface InstallCtx {
+  shop: string;
+  storeUrl: string;
+}
+
 @Injectable()
 export class InstallService {
   private readonly logger = new Logger(InstallService.name);
-  private readonly storeUrl = process.env.SHOPIFY_STORE_URL!;
   private readonly apiVersion = '2026-04';
 
-  constructor(private readonly tokenService: ShopifyTokenService) {}
+  constructor(
+    private readonly tokenService: ShopifyTokenService,
+    private readonly shopConfigService: ShopConfigService,
+  ) {}
 
-  private async shopifyFetch<T = any>(path: string, options: RequestInit = {}): Promise<T> {
-    const url = `${this.storeUrl}/admin/api/${this.apiVersion}${path}`;
+  private get db() {
+    if (getApps().length === 0) {
+      initializeApp();
+    }
+    return getFirestore();
+  }
+
+  /**
+   * Audit trail for /install and /uninstall runs — lets us see which shops
+   * got the latest storefront assets and when, especially now that
+   * install-all-shops.js pushes updates to every shop unattended.
+   */
+  private async logInstallRun(
+    shop: string,
+    action: 'install' | 'uninstall',
+    result: { success: boolean; steps?: string[]; error?: string },
+  ): Promise<void> {
+    await this.db.collection('install_logs').add({
+      shop,
+      action,
+      success: result.success,
+      steps: result.steps ?? [],
+      error: result.error ?? null,
+      timestamp: Date.now(),
+    });
+  }
+
+  private async shopifyFetch<T = any>(
+    ctx: InstallCtx,
+    path: string,
+    options: RequestInit = {},
+  ): Promise<T> {
+    const url = `${ctx.storeUrl}/admin/api/${this.apiVersion}${path}`;
 
     const doFetch = async (token: string) =>
       fetch(url, {
@@ -41,10 +88,10 @@ export class InstallService {
         },
       });
 
-    let res = await doFetch(await this.tokenService.getToken());
+    let res = await doFetch(await this.tokenService.getToken(ctx.shop));
 
     if (res.status === 401) {
-      res = await doFetch(await this.tokenService.refreshToken());
+      res = await doFetch(await this.tokenService.refreshToken(ctx.shop));
     }
 
     if (!res.ok) {
@@ -55,8 +102,9 @@ export class InstallService {
     return res.json() as Promise<T>;
   }
 
-  private async getActiveThemeId(): Promise<string> {
+  private async getActiveThemeId(ctx: InstallCtx): Promise<string> {
     const data = await this.shopifyFetch<{ themes: { id: number; role: string }[] }>(
+      ctx,
       '/themes.json',
     );
     const theme = data.themes.find((t) => t.role === 'main');
@@ -64,17 +112,23 @@ export class InstallService {
     return String(theme.id);
   }
 
-  private async uploadAsset(themeId: string, key: string, value: string): Promise<void> {
-    await this.shopifyFetch(`/themes/${themeId}/assets.json`, {
+  private async uploadAsset(
+    ctx: InstallCtx,
+    themeId: string,
+    key: string,
+    value: string,
+  ): Promise<void> {
+    await this.shopifyFetch(ctx, `/themes/${themeId}/assets.json`, {
       method: 'PUT',
       body: JSON.stringify({ asset: { key, value } }),
     });
     this.logger.log(`Uploaded: ${key}`);
   }
 
-  private async getAsset(themeId: string, key: string): Promise<string | null> {
+  private async getAsset(ctx: InstallCtx, themeId: string, key: string): Promise<string | null> {
     try {
       const data = await this.shopifyFetch<{ asset: { value: string } }>(
+        ctx,
         `/themes/${themeId}/assets.json?asset[key]=${encodeURIComponent(key)}`,
       );
       return data.asset.value;
@@ -95,22 +149,22 @@ export class InstallService {
     return result;
   }
 
-  private async mergeLocales(themeId: string): Promise<string[]> {
+  private async mergeLocales(ctx: InstallCtx, themeId: string): Promise<string[]> {
     const results: string[] = [];
     for (const { key, content } of LOCALES) {
-      const existing = await this.getAsset(themeId, key);
+      const existing = await this.getAsset(ctx, themeId, key);
       const wishlistKeys = JSON.parse(content());
       const merged = existing ? this.deepMerge(JSON.parse(existing), wishlistKeys) : wishlistKeys;
-      await this.uploadAsset(themeId, key, JSON.stringify(merged, null, 2));
+      await this.uploadAsset(ctx, themeId, key, JSON.stringify(merged, null, 2));
       results.push(`Merged locale keys: ${key}`);
     }
     return results;
   }
 
-  private async removeLocaleKeys(themeId: string): Promise<string[]> {
+  private async removeLocaleKeys(ctx: InstallCtx, themeId: string): Promise<string[]> {
     const results: string[] = [];
     for (const { key } of LOCALES) {
-      const existing = await this.getAsset(themeId, key);
+      const existing = await this.getAsset(ctx, themeId, key);
       if (!existing) {
         results.push(`Skipped: ${key} not found`);
         continue;
@@ -123,7 +177,7 @@ export class InstallService {
       }
 
       delete current.wishlist;
-      await this.uploadAsset(themeId, key, JSON.stringify(current, null, 2));
+      await this.uploadAsset(ctx, themeId, key, JSON.stringify(current, null, 2));
       results.push(`Removed wishlist keys from: ${key}`);
     }
     return results;
@@ -163,9 +217,9 @@ export class InstallService {
   private readonly BTN_START = '<!-- wishlist-app:btn-start -->';
   private readonly BTN_END = '<!-- wishlist-app:btn-end -->';
 
-  private async patchMainProduct(themeId: string): Promise<string> {
+  private async patchMainProduct(ctx: InstallCtx, themeId: string): Promise<string> {
     const key = 'sections/main-product.liquid';
-    const content = await this.getAsset(themeId, key);
+    const content = await this.getAsset(ctx, themeId, key);
     if (!content) return `Skipped: ${key} not found in theme`;
 
     let patched = content;
@@ -206,30 +260,31 @@ export class InstallService {
       );
     }
 
-    await this.uploadAsset(themeId, key, patched);
+    await this.uploadAsset(ctx, themeId, key, patched);
     return `Patched: ${key}`;
   }
 
-  private async syncWebhook(): Promise<string> {
+  private async syncWebhook(ctx: InstallCtx): Promise<string> {
     const appUrl = process.env.APP_URL;
     if (!appUrl) return 'Skipped: APP_URL not set in .env';
 
     const address = `${appUrl}/webhooks/app/uninstalled`;
 
     const existing = await this.shopifyFetch<{ webhooks: { id: number; address: string }[] }>(
+      ctx,
       '/webhooks.json?topic=app%2Funinstalled',
     );
 
     // Delete stale webhooks pointing at a different URL (e.g. old ngrok address)
     for (const w of existing.webhooks) {
       if (w.address !== address) {
-        await this.shopifyFetch(`/webhooks/${w.id}.json`, { method: 'DELETE' });
+        await this.shopifyFetch(ctx, `/webhooks/${w.id}.json`, { method: 'DELETE' });
       }
     }
 
     // Create if not already registered at the current address
     if (!existing.webhooks.some((w) => w.address === address)) {
-      await this.shopifyFetch('/webhooks.json', {
+      await this.shopifyFetch(ctx, '/webhooks.json', {
         method: 'POST',
         body: JSON.stringify({
           webhook: { topic: 'app/uninstalled', address, format: 'json' },
@@ -240,31 +295,33 @@ export class InstallService {
     return `Synced webhook: ${address}`;
   }
 
-  private async syncWishlistPage(): Promise<string> {
+  private async syncWishlistPage(ctx: InstallCtx): Promise<string> {
     const data = await this.shopifyFetch<{ pages: { id: number }[] }>(
+      ctx,
       '/pages.json?handle=wishlist',
     );
     const page = { title: 'Wishlist', handle: 'wishlist', template_suffix: 'wishlist' };
 
     if (data.pages.length > 0) {
       const pageId = data.pages[0].id;
-      await this.shopifyFetch(`/pages/${pageId}.json`, {
+      await this.shopifyFetch(ctx, `/pages/${pageId}.json`, {
         method: 'PUT',
         body: JSON.stringify({ page }),
       });
       return 'Synced: /pages/wishlist';
     }
 
-    await this.shopifyFetch('/pages.json', {
+    await this.shopifyFetch(ctx, '/pages.json', {
       method: 'POST',
       body: JSON.stringify({ page }),
     });
     return 'Created: /pages/wishlist';
   }
 
-  private async deleteAsset(themeId: string, key: string): Promise<void> {
+  private async deleteAsset(ctx: InstallCtx, themeId: string, key: string): Promise<void> {
     try {
       await this.shopifyFetch(
+        ctx,
         `/themes/${themeId}/assets.json?asset[key]=${encodeURIComponent(key)}`,
         { method: 'DELETE' },
       );
@@ -274,9 +331,9 @@ export class InstallService {
     }
   }
 
-  private async unpatchMainProduct(themeId: string): Promise<string> {
+  private async unpatchMainProduct(ctx: InstallCtx, themeId: string): Promise<string> {
     const key = 'sections/main-product.liquid';
-    const content = await this.getAsset(themeId, key);
+    const content = await this.getAsset(ctx, themeId, key);
     if (!content) return `Skipped: ${key} not found`;
 
     const hasCss = content.includes(this.CSS_START);
@@ -306,79 +363,103 @@ export class InstallService {
       );
     }
 
-    await this.uploadAsset(themeId, key, patched);
+    await this.uploadAsset(ctx, themeId, key, patched);
     return `Reverted: ${key}`;
   }
 
-  private async deleteWishlistPage(): Promise<string> {
+  private async deleteWishlistPage(ctx: InstallCtx): Promise<string> {
     const data = await this.shopifyFetch<{ pages: { id: number }[] }>(
+      ctx,
       '/pages.json?handle=wishlist',
     );
     if (data.pages.length === 0) return 'Skipped: /pages/wishlist not found';
 
     const pageId = data.pages[0].id;
-    await this.shopifyFetch(`/pages/${pageId}.json`, { method: 'DELETE' });
+    await this.shopifyFetch(ctx, `/pages/${pageId}.json`, { method: 'DELETE' });
     return `Deleted: /pages/wishlist (id: ${pageId})`;
   }
 
-  async install(): Promise<{ success: boolean; steps: string[] }> {
+  async install(shop: string): Promise<{ success: boolean; steps: string[] }> {
     const steps: string[] = [];
+    try {
+      const { storeUrl } = await this.shopConfigService.getConfig(shop);
+      const ctx: InstallCtx = { shop, storeUrl };
 
-    const themeId = await this.getActiveThemeId();
-    steps.push(`Active theme ID: ${themeId}`);
+      const themeId = await this.getActiveThemeId(ctx);
+      steps.push(`Active theme ID: ${themeId}`);
 
-    await this.uploadAsset(themeId, 'assets/wishlist-btn.js', WISHLIST_BTN_JS);
-    steps.push('Synced: assets/wishlist-btn.js');
+      await this.uploadAsset(ctx, themeId, 'assets/wishlist-btn.js', WISHLIST_BTN_JS);
+      steps.push('Synced: assets/wishlist-btn.js');
 
-    await this.uploadAsset(themeId, 'assets/wishlist-page.js', WISHLIST_PAGE_JS);
-    steps.push('Synced: assets/wishlist-page.js');
+      await this.uploadAsset(ctx, themeId, 'assets/wishlist-page.js', WISHLIST_PAGE_JS);
+      steps.push('Synced: assets/wishlist-page.js');
 
-    await this.uploadAsset(themeId, 'sections/wishlist-page.liquid', WISHLIST_PAGE_LIQUID);
-    steps.push('Synced: sections/wishlist-page.liquid');
+      await this.uploadAsset(ctx, themeId, 'sections/wishlist-page.liquid', WISHLIST_PAGE_LIQUID);
+      steps.push('Synced: sections/wishlist-page.liquid');
 
-    await this.uploadAsset(themeId, 'templates/page.wishlist.json', WISHLIST_PAGE_TEMPLATE_JSON);
-    steps.push('Synced: templates/page.wishlist.json');
+      await this.uploadAsset(
+        ctx,
+        themeId,
+        'templates/page.wishlist.json',
+        WISHLIST_PAGE_TEMPLATE_JSON,
+      );
+      steps.push('Synced: templates/page.wishlist.json');
 
-    const patchResult = await this.patchMainProduct(themeId);
-    steps.push(patchResult);
+      const patchResult = await this.patchMainProduct(ctx, themeId);
+      steps.push(patchResult);
 
-    steps.push(...(await this.mergeLocales(themeId)));
+      steps.push(...(await this.mergeLocales(ctx, themeId)));
 
-    const pageResult = await this.syncWishlistPage();
-    steps.push(pageResult);
+      const pageResult = await this.syncWishlistPage(ctx);
+      steps.push(pageResult);
 
-    const webhookResult = await this.syncWebhook();
-    steps.push(webhookResult);
+      const webhookResult = await this.syncWebhook(ctx);
+      steps.push(webhookResult);
 
-    return { success: true, steps };
+      await this.logInstallRun(shop, 'install', { success: true, steps });
+      return { success: true, steps };
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      await this.logInstallRun(shop, 'install', { success: false, steps, error });
+      throw err;
+    }
   }
 
-  async uninstall(): Promise<{ success: boolean; steps: string[] }> {
+  async uninstall(shop: string): Promise<{ success: boolean; steps: string[] }> {
     const steps: string[] = [];
+    try {
+      const { storeUrl } = await this.shopConfigService.getConfig(shop);
+      const ctx: InstallCtx = { shop, storeUrl };
 
-    const themeId = await this.getActiveThemeId();
-    steps.push(`Active theme ID: ${themeId}`);
+      const themeId = await this.getActiveThemeId(ctx);
+      steps.push(`Active theme ID: ${themeId}`);
 
-    await this.deleteAsset(themeId, 'assets/wishlist-btn.js');
-    steps.push('Deleted: assets/wishlist-btn.js');
+      await this.deleteAsset(ctx, themeId, 'assets/wishlist-btn.js');
+      steps.push('Deleted: assets/wishlist-btn.js');
 
-    await this.deleteAsset(themeId, 'assets/wishlist-page.js');
-    steps.push('Deleted: assets/wishlist-page.js');
+      await this.deleteAsset(ctx, themeId, 'assets/wishlist-page.js');
+      steps.push('Deleted: assets/wishlist-page.js');
 
-    await this.deleteAsset(themeId, 'sections/wishlist-page.liquid');
-    steps.push('Deleted: sections/wishlist-page.liquid');
+      await this.deleteAsset(ctx, themeId, 'sections/wishlist-page.liquid');
+      steps.push('Deleted: sections/wishlist-page.liquid');
 
-    await this.deleteAsset(themeId, 'templates/page.wishlist.json');
-    steps.push('Deleted: templates/page.wishlist.json');
+      await this.deleteAsset(ctx, themeId, 'templates/page.wishlist.json');
+      steps.push('Deleted: templates/page.wishlist.json');
 
-    const unpatchResult = await this.unpatchMainProduct(themeId);
-    steps.push(unpatchResult);
+      const unpatchResult = await this.unpatchMainProduct(ctx, themeId);
+      steps.push(unpatchResult);
 
-    steps.push(...(await this.removeLocaleKeys(themeId)));
+      steps.push(...(await this.removeLocaleKeys(ctx, themeId)));
 
-    const pageResult = await this.deleteWishlistPage();
-    steps.push(pageResult);
+      const pageResult = await this.deleteWishlistPage(ctx);
+      steps.push(pageResult);
 
-    return { success: true, steps };
+      await this.logInstallRun(shop, 'uninstall', { success: true, steps });
+      return { success: true, steps };
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      await this.logInstallRun(shop, 'uninstall', { success: false, steps, error });
+      throw err;
+    }
   }
 }

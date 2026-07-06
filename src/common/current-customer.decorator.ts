@@ -15,6 +15,23 @@ function resolveCustomerId(req: FastifyRequest): string | null {
   );
 }
 
+function resolveShop(req: FastifyRequest): string | null {
+  const query = req.query as Record<string, string>;
+  return (req as any).shopDomain || query?.shop || null;
+}
+
+/**
+ * Extracts the shop domain attached to the request by AppProxyGuard (or the
+ * `?shop=` query param as a local-test fallback, mirroring CurrentCustomerId).
+ * Usage in controllers: @CurrentShop() shop: string
+ */
+export const CurrentShop = createParamDecorator(
+  (_data: unknown, ctx: ExecutionContext): string | null => {
+    const req = ctx.switchToHttp().getRequest<FastifyRequest>();
+    return resolveShop(req);
+  },
+);
+
 /**
  * Extracts the Shopify customer ID attached to the request by AppProxyGuard.
  * Usage in controllers: @CurrentCustomerId() customerId: string

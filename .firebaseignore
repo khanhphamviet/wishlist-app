@@ -1,0 +1,6 @@
+node_modules
+.git
+storefront
+coverage
+*.spec.ts
+.env

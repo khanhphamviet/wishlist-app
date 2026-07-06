@@ -1,23 +1,26 @@
-import { Controller, Delete, Get, Post, Render } from '@nestjs/common';
+import { Controller, Delete, Get, Post, Query, Render, UseGuards } from '@nestjs/common';
+import { CurrentShop } from '../common/current-customer.decorator';
+import { InstallAuthGuard } from './install-auth.guard';
 import { InstallService } from './install.service';
 
 @Controller('install')
+@UseGuards(InstallAuthGuard)
 export class InstallController {
   constructor(private readonly installService: InstallService) {}
 
   @Get()
   @Render('dashboard')
-  dashboard() {
-    return {};
+  dashboard(@Query('shop') shop: string, @Query('key') key: string) {
+    return { shop, key };
   }
 
   @Post()
-  install() {
-    return this.installService.install();
+  install(@CurrentShop() shop: string) {
+    return this.installService.install(shop);
   }
 
   @Delete()
-  uninstall() {
-    return this.installService.uninstall();
+  uninstall(@CurrentShop() shop: string) {
+    return this.installService.uninstall(shop);
   }
 }

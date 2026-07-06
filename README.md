@@ -2,21 +2,27 @@
 
 A NestJS + Fastify backend that adds wishlist functionality to a Shopify storefront. Customer wishlists are stored as JSON metafields on the Shopify Customer object via the Admin GraphQL API. Storefront integration is handled through Shopify App Proxy, and theme assets are installed automatically via the Theme Assets REST API.
 
+The backend is **multi-tenant**: one deployment can serve multiple Shopify stores, each with its own custom app credentials, stored in Firestore rather than `.env`. It can run as a plain long-lived Node process or as a Firebase Cloud Function.
+
 ## Tech Stack
 
 - **Framework**: NestJS + Fastify
 - **Shopify**: Admin GraphQL API (wishlist data) + REST Admin API (theme installation, webhooks)
+- **Per-shop config + token cache**: Firestore (`firebase-admin`)
+- **Serverless (optional)**: Firebase Cloud Functions v2 + Hosting
 - **Testing**: Jest + ts-jest
 
 ---
 
-## 1. Create a Shopify Custom App
+## 1. Create a Shopify Custom App (per store)
+
+Each store you want to serve needs its **own** custom app — there's no shared OAuth client, so credentials are per-store, not per-deployment.
 
 ### 1.1 Create the app
 
-1. Go to your Shopify Admin → **Settings** → **Apps**
+1. Go to that store's Shopify Admin → **Settings** → **Apps**
 2. Click **Build apps in Dev Dashboard** — this opens `dev.shopify.com`
-3. Click **Create app**, give it a name (e.g. `Wishlist App`), select your store
+3. Click **Create app**, give it a name (e.g. `Wishlist App`), select the store
 
 ### 1.2 Configure API scopes
 
@@ -34,22 +40,24 @@ read_themes, write_themes, read_content, write_content
 
 In the app → **Settings**:
 
-| Field     | Where              | .env key             |
-| --------- | ------------------ | -------------------- |
-| Client ID | Shown directly     | —                    |
-| Secret    | Click the eye icon | `SHOPIFY_API_SECRET` |
+| Field     | Where              |
+| --------- | ------------------ |
+| Client ID | Shown directly     |
+| Secret    | Click the eye icon |
+
+These become that store's `apiKey`/`apiSecret` in Firestore — see [Section 3](#3-configure-a-shop-firestore).
 
 ### 1.4 Access token
 
-No manual step needed — the app fetches a token automatically on startup using `SHOPIFY_API_KEY` + `SHOPIFY_API_SECRET` via OAuth `client_credentials`. It also re-fetches whenever a 401 is returned (e.g. after rotating the secret).
+No manual step needed — the app fetches a token automatically per shop, using that shop's `apiKey`/`apiSecret` via OAuth `client_credentials`, and caches it in Firestore. It re-fetches whenever a 401 is returned (e.g. after rotating the secret).
 
 ---
 
-## 2. Configure App Proxy
+## 2. Configure App Proxy (per store)
 
-The App Proxy lets the storefront call your backend through Shopify's domain (so requests carry the customer session).
+The App Proxy lets each storefront call your backend through Shopify's domain (so requests carry the customer session and shop identity).
 
-1. In your app → **Configuration** → **App Proxy**
+1. In that store's app → **Configuration** → **App Proxy**
 2. Fill in:
 
 | Field          | Value                                 |
@@ -58,32 +66,52 @@ The App Proxy lets the storefront call your backend through Shopify's domain (so
 | Subpath        | `wishlist`                            |
 | Proxy URL      | `https://<your-backend-url>/wishlist` |
 
-3. Save — Shopify will forward all `/apps/wishlist/*` storefront requests to your backend, injecting `logged_in_customer_id` automatically.
+Same Proxy URL for every store — the backend tells shops apart by the `shop` query param Shopify injects, verified against that shop's own secret.
+
+3. Save — Shopify will forward all `/apps/wishlist/*` storefront requests to your backend, injecting `logged_in_customer_id` and `shop` automatically.
 
 ---
 
-## 3. Local Development
+## 3. Configure a shop (Firestore)
 
-### 3.1 Install dependencies
+Per-shop config (`storeUrl`, `apiKey`, `apiSecret`) lives in Firestore, not `.env` — collection `shops/{shopDomain}`, read via `ShopConfigService`. There's no self-serve UI; seed it with the helper script:
+
+```bash
+node scripts/add-shop.js <shop>.myshopify.com <apiKey> <apiSecret>
+```
+
+This needs Firestore credentials in your environment — either `GOOGLE_APPLICATION_CREDENTIALS` pointing at a service account key, or `FIRESTORE_EMULATOR_HOST=localhost:8080` against a local emulator. Re-run the script (it upserts) to rotate a secret or fix a typo.
+
+---
+
+## 4. Local Development
+
+### 4.1 Install dependencies
 
 ```bash
 npm install
 ```
 
-### 3.2 Configure environment
+### 4.2 Configure environment
+
+`.env` no longer holds per-store credentials — only deployment-wide settings:
 
 ```env
-SHOPIFY_STORE_URL=https://your-store.myshopify.com
-SHOPIFY_API_KEY=your_client_id
-SHOPIFY_API_SECRET=your_client_secret
-
 # Public URL of this backend — used for App Proxy and webhook registration
 APP_URL=https://your-ngrok-url.ngrok.io
 
 PORT=3000
+
+# Shared secret required to call POST/DELETE /install (no App Proxy context there)
+INSTALL_SECRET=some-long-random-string
+
+# Firestore — point at a service account key for local dev, or run the emulator
+# GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
 ```
 
-### 3.3 Expose localhost publicly with ngrok
+Then seed at least one shop (Section 3).
+
+### 4.3 Expose localhost publicly with ngrok
 
 Shopify requires a publicly accessible HTTPS URL for both App Proxy and webhooks.
 
@@ -92,9 +120,9 @@ Shopify requires a publicly accessible HTTPS URL for both App Proxy and webhooks
 ngrok http 3000
 ```
 
-Copy the `https://...ngrok.io` URL and set it as `APP_URL` in `.env`, and as the **Proxy URL** in the Partners dashboard (step 2).
+Copy the `https://...ngrok.io` URL and set it as `APP_URL` in `.env`, and as the **Proxy URL** in the Dev Dashboard (Section 2) for each store under test.
 
-### 3.4 Start the server
+### 4.4 Start the server
 
 ```bash
 npm run start:dev
@@ -102,12 +130,13 @@ npm run start:dev
 
 ---
 
-## 4. Install Theme Assets
+## 5. Install Theme Assets
 
-Once the server is running, install all storefront assets with a single request. This uploads the JS files, creates the wishlist page, and patches the product page automatically.
+Once the server is running, install all storefront assets for a given shop with a single request. This uploads the JS files, creates the wishlist page, and patches the product page automatically. It requires the `INSTALL_SECRET` from `.env` (there's no App Proxy context on this endpoint).
 
 ```bash
-curl -X POST http://localhost:3000/install
+curl -X POST "http://localhost:3000/install?shop=<shop>.myshopify.com" \
+  -H "x-install-secret: <INSTALL_SECRET>"
 ```
 
 **What it does:**
@@ -134,64 +163,75 @@ Example response:
     "Uploaded: templates/page.wishlist.json",
     "Patched: sections/main-product.liquid",
     "Created: /pages/wishlist",
-    "Registered webhook: https://your-backend/webhooks/app/uninstalled"
+    "Synced webhook: https://your-backend/webhooks/app/uninstalled"
   ]
 }
 ```
 
+You can also do this from the browser dashboard: `http://localhost:3000/install?shop=<shop>.myshopify.com&key=<INSTALL_SECRET>` — see Section 8.4.
+
 ---
 
-## 5. Uninstall Theme Assets
+## 6. Uninstall Theme Assets
 
-Before uninstalling the app from Shopify, run this to cleanly remove all theme changes:
+Before uninstalling the app from a store, run this to cleanly remove all theme changes for that shop:
 
 ```bash
-curl -X DELETE http://localhost:3000/install
+curl -X DELETE "http://localhost:3000/install?shop=<shop>.myshopify.com" \
+  -H "x-install-secret: <INSTALL_SECRET>"
 ```
 
 This removes the uploaded assets, reverts `main-product.liquid`, and deletes the wishlist page.
 
-> **Note:** After the app is uninstalled from Shopify, the access token is revoked and theme API calls will fail. Always run `DELETE /install` before uninstalling the app.
+> **Note:** After the app is uninstalled from Shopify, that shop's access token is revoked and theme API calls will fail. Always run `DELETE /install` before uninstalling the app. When the `app/uninstalled` webhook fires, the backend also deletes that shop's cached token and marks its config `disabledAt` (without deleting the stored credentials, so a reinstall doesn't require re-entering them).
 
 ---
 
-## 6. API Reference
+## 7. API Reference
 
 ### Wishlist endpoints
 
-All wishlist endpoints require a logged-in customer. When called through App Proxy, the customer ID is injected automatically. For local testing, pass `?customer_id=<id>`.
+All wishlist endpoints require a valid, per-shop App Proxy HMAC signature (`AppProxyGuard`) plus a logged-in customer. When called through App Proxy, `shop` and `logged_in_customer_id` are injected automatically. For local testing without a real storefront, sign a request yourself:
+
+```bash
+QS=$(node scripts/sign-app-proxy-request.js <shop's apiSecret> shop=<shop>.myshopify.com logged_in_customer_id=<id>)
+curl "http://localhost:3000/wishlist/list?$QS"
+```
 
 | Method | Path                              | Description                                                |
-| ------ | --------------------------------- | ---------------------------------------------------------- |
+| ------ | --------------------------------- | ------------------------------------------------------------ |
 | `GET`  | `/wishlist/list`                  | Returns full product details for all wishlisted items      |
-| `GET`  | `/wishlist/check?product_id=<id>` | Returns `{ is_wishlisted: boolean }`                       |
-| `POST` | `/wishlist/toggle`                | Adds or removes a product; body: `{ "product_id": "123" }` |
+| `GET`  | `/wishlist/check?product_id=<id>` | Returns `{ is_wishlisted: boolean }`                        |
+| `POST` | `/wishlist/toggle`                | Adds or removes a product; body: `{ "product_id": "123" }`  |
 
 ### Install endpoints
 
-| Method   | Path       | Description                                                                   |
-| -------- | ---------- | ----------------------------------------------------------------------------- |
-| `POST`   | `/install` | Sync assets, patch theme, create page, register webhook (idempotent)          |
-| `DELETE` | `/install` | Remove all theme changes                                                       |
+Require `?shop=<shop>.myshopify.com` and an `x-install-secret` header (or `?key=`) matching `INSTALL_SECRET`.
+
+| Method   | Path       | Description                                                           |
+| -------- | ---------- | ----------------------------------------------------------------------- |
+| `POST`   | `/install` | Sync assets, patch theme, create page, register webhook (idempotent)  |
+| `DELETE` | `/install` | Remove all theme changes                                              |
 
 ### Webhook endpoints
 
 | Method | Path                        | Description                                           |
-| ------ | --------------------------- | ----------------------------------------------------- |
+| ------ | --------------------------- | ------------------------------------------------------ |
 | `POST` | `/webhooks/app/uninstalled` | Shopify fires this when a merchant uninstalls the app |
 
 ---
 
-## 7. How It Works
+## 8. How It Works
 
 ```
-Storefront browser
+Storefront browser (store A or store B)
   └─ GET /apps/wishlist/list
        └─ Shopify App Proxy
             └─ adds logged_in_customer_id, shop, signature to query params
-                 └─ GET /wishlist/list?logged_in_customer_id=123&...
+                 └─ GET /wishlist/list?logged_in_customer_id=123&shop=store-a.myshopify.com&...
                       └─ NestJS backend
-                           └─ Shopify GraphQL API
+                           ├─ AppProxyGuard: looks up store-a's secret in Firestore, verifies HMAC
+                           └─ Shopify GraphQL API (store-a's own token)
                                 └─ read/write customer.metafields.custom.wishlist
 ```
 
@@ -203,9 +243,9 @@ Wishlists are stored as a JSON array of Shopify product GIDs in the `custom.wish
 
 ---
 
-## 8. Deployment
+## 9. Deployment
 
-### 8.1 Build
+### 9.1 Build
 
 ```bash
 npm run build
@@ -213,29 +253,22 @@ npm run build
 
 Output goes to `dist/`. The `prebuild` hook automatically syncs `storefront/` → `src/install/assets.ts` before compiling.
 
-### 8.2 Environment variables on the server
+There are two ways to run the built app:
 
-Set these in `.env` (or your host's env config panel):
+### 9.2 Option A — plain Node process
 
 ```env
-SHOPIFY_STORE_URL=https://your-store.myshopify.com
-SHOPIFY_API_KEY=your_client_id
-SHOPIFY_API_SECRET=your_client_secret
-
 APP_URL=https://your-production-domain.com
-
 PORT=3000
+INSTALL_SECRET=some-long-random-string
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
 ```
-
-The app fetches the Shopify access token automatically on first request — no `SHOPIFY_ACCESS_TOKEN` needed.
-
-### 8.3 Start in production
 
 ```bash
 node dist/main
 ```
 
-Or with PM2 for process management:
+Or with PM2:
 
 ```bash
 npm install -g pm2
@@ -243,38 +276,43 @@ pm2 start dist/main.js --name wishlist-app
 pm2 save
 ```
 
-### 8.4 Install / update theme assets
+### 9.3 Option B — Firebase Cloud Functions + Hosting
 
-Open the dashboard in a browser and click **Install** (or **Update** after code changes):
-
-```
-https://your-production-domain.com/install
-```
-
-Or via curl:
+`src/firebase-entry.ts` exports an `onRequest` Cloud Function (`api`) that runs the same Nest+Fastify app, reused across warm invocations. `firebase.json` rewrites all Hosting traffic to it.
 
 ```bash
-curl -X POST https://your-production-domain.com/install
+npm install -g firebase-tools
+firebase login
 ```
 
-### 8.5 Update storefront code
+1. Set your project id in `.firebaserc` (replace `REPLACE_WITH_FIREBASE_PROJECT_ID`)
+2. Set Cloud Functions config/env: `APP_URL` (the Hosting/custom domain) and `INSTALL_SECRET` — via `firebase functions:secrets:set` or your project's runtime env config. Firestore access uses the function's default service account automatically (no `GOOGLE_APPLICATION_CREDENTIALS` needed in this mode).
+3. Deploy:
+   ```bash
+   firebase deploy
+   ```
+4. Firebase Hosting → **Add custom domain**, then follow the DNS/SSL steps in the console.
+
+The `preParsing` hook in `src/bootstrap.ts` handles a Cloud Functions–specific quirk: `onRequest` pre-buffers the body as `req.rawBody` before Fastify sees it, so the hook reuses those bytes for webhook/App-Proxy HMAC verification instead of re-reading an already-consumed stream. Verify this against the Firebase emulator (`firebase emulators:start`) or a real deployed webhook before relying on it in production — it's the one part of this setup that can't be confirmed by local unit tests alone.
+
+### 9.4 Update storefront code
 
 1. Edit files in `storefront/`
 2. Run `npm run build` (syncs assets and compiles)
-3. Deploy `dist/` to the server
-4. Hit `POST /install` to push changes to the live theme
+3. Deploy `dist/` (or redeploy the Cloud Function)
+4. Hit `POST /install?shop=<shop>` for each shop to push changes to its live theme
 
-### 8.6 Checklist
+### 9.5 Checklist
 
-- [ ] Set env vars on the server
-- [ ] Update `APP_URL` to the production URL
-- [ ] Update the **App Proxy URL** in your app → Configuration (`https://your-domain.com/wishlist`)
-- [ ] Re-enable `AppProxyGuard` in `src/wishlist/wishlist.controller.ts`
-- [ ] Run `POST /install` to upload assets and register the webhook
+- [ ] Seed a `shops/{shopDomain}` Firestore doc for each store (`node scripts/add-shop.js`)
+- [ ] Set `INSTALL_SECRET` and `APP_URL` for the deployed environment
+- [ ] Update the **App Proxy URL** in each store's app → Configuration (`https://your-domain.com/wishlist`)
+- [ ] Run `POST /install?shop=<shop>` (with `x-install-secret`) for each shop to upload assets and register the webhook
+- [ ] If using Firebase: custom domain connected, `firestore.rules` deployed (deny-all client access), and the raw-body webhook path verified against a real request
 
 ---
 
-## 9. Project Structure
+## 10. Project Structure
 
 ```
 storefront/                         # Source of truth — edit these, then run npm run sync-assets
@@ -286,44 +324,58 @@ storefront/                         # Source of truth — edit these, then run n
 └── page.wishlist.json              # Shopify JSON template
 
 scripts/
-└── sync-assets.js                  # Reads storefront/ and regenerates src/install/assets.ts
+├── sync-assets.js                  # Reads storefront/ and regenerates src/install/assets.ts
+├── add-shop.js                     # Seeds/updates a shops/{shop} Firestore doc
+└── sign-app-proxy-request.js       # Signs App Proxy query params for local curl testing
 
 src/
+├── bootstrap.ts                    # Builds the Nest+Fastify app (shared by main.ts and firebase-entry.ts)
+├── main.ts                         # Local dev entrypoint — createApp() + app.listen()
+├── firebase-entry.ts               # Cloud Functions v2 onRequest handler
 ├── common/
-│   ├── app-proxy.guard.ts          # HMAC signature verification (for published apps)
-│   └── current-customer.decorator.ts  # Resolves customer ID + RequireLoginGuard
+│   ├── app-proxy.guard.ts          # Per-shop HMAC signature verification
+│   └── current-customer.decorator.ts  # Resolves customer ID + shop, RequireLoginGuard
 ├── install/
 │   ├── assets.ts                   # AUTO-GENERATED — do not edit manually
-│   ├── install.service.ts          # Theme Assets API — upload, patch, delete
-│   └── install.controller.ts       # GET /install (dashboard), POST, POST /update, DELETE
+│   ├── install.service.ts          # Theme Assets API — upload, patch, delete (per-shop context)
+│   ├── install-auth.guard.ts       # Shared-secret + shop validation for /install
+│   └── install.controller.ts       # GET /install (dashboard), POST, DELETE
 ├── shopify/
-│   └── shopify-admin.service.ts    # GraphQL client — metafield read/write, product fetch
+│   ├── shop-config.service.ts      # Firestore-backed per-shop config (shops/{shop})
+│   ├── shopify-token.service.ts    # client_credentials fetch + Firestore token cache, per shop
+│   └── shopify-admin.service.ts    # GraphQL client — metafield read/write, product fetch (per shop)
 ├── webhooks/
-│   ├── webhooks.service.ts         # HMAC verification + uninstall handler
+│   ├── webhooks.service.ts         # Per-shop HMAC verification + uninstall cleanup
 │   └── webhooks.controller.ts      # POST /webhooks/app/uninstalled
 └── wishlist/
-    ├── wishlist.service.ts         # Toggle/list/check business logic
+    ├── wishlist.service.ts         # Toggle/list/check business logic (per shop)
     └── wishlist.controller.ts      # GET /wishlist/list, /check, POST /toggle
 
 views/
-└── dashboard.hbs                   # Install dashboard UI (Handlebars template)
+└── dashboard.hbs                   # Install dashboard UI (requires ?shop=&key=)
+
+firebase.json, .firebaserc, firestore.rules, .firebaseignore   # Firebase deploy config
+public/                             # Hosting placeholder (all routes rewrite to the function)
 ```
 
-## 10. Testing
+## 11. Testing
 
 ```bash
 npm test             # run all tests
 npm run test:watch   # watch mode
 ```
 
-Local testing without App Proxy (find your customer ID in Shopify Admin → Customers → click a customer → ID is in the URL):
+`AppProxyGuard` is always on, so `/wishlist/*` requires a real signed request, not just a customer ID. Seed a shop (Section 3), then:
 
 ```bash
-curl 'http://localhost:3000/wishlist/list?customer_id=<CUSTOMER_ID>'
-curl 'http://localhost:3000/wishlist/check?customer_id=<CUSTOMER_ID>&product_id=<PRODUCT_ID>'
-curl -X POST 'http://localhost:3000/wishlist/toggle?customer_id=<CUSTOMER_ID>' \
+QS=$(node scripts/sign-app-proxy-request.js <shop's apiSecret> shop=<shop>.myshopify.com logged_in_customer_id=<CUSTOMER_ID>)
+curl "http://localhost:3000/wishlist/list?$QS"
+curl "http://localhost:3000/wishlist/check?$QS&product_id=<PRODUCT_ID>"
+curl -X POST "http://localhost:3000/wishlist/toggle?$QS" \
   -H 'Content-Type: application/json' \
   -d '{"product_id":"<PRODUCT_ID>"}'
 ```
 
-# wishlist-app
+Find customer IDs in Shopify Admin → Customers → click a customer → ID is in the URL.
+
+To test the full multi-store flow (including `InstallService`'s per-shop concurrency safety) without touching real stores, run the Firestore emulator (`firebase emulators:start --only firestore`), seed two shops pointing at local stub servers, and fire concurrent `POST /install?shop=...` requests for each.

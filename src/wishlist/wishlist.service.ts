@@ -20,8 +20,8 @@ export class WishlistService {
     return gid.split('/').pop() ?? gid;
   }
 
-  async checkIsWishlisted(customerId: string, productId: string): Promise<boolean> {
-    const ids = await this.shopifyAdmin.getWishlistProductIds(this.toCustomerGid(customerId));
+  async checkIsWishlisted(shop: string, customerId: string, productId: string): Promise<boolean> {
+    const ids = await this.shopifyAdmin.getWishlistProductIds(shop, this.toCustomerGid(customerId));
     return ids.includes(this.toProductGid(productId));
   }
 
@@ -29,18 +29,22 @@ export class WishlistService {
    * Toggles a product in the wishlist (removes it if present, adds it if not).
    * Returns the new state after the toggle.
    */
-  async toggle(customerId: string, productId: string): Promise<{ isWishlisted: boolean }> {
+  async toggle(
+    shop: string,
+    customerId: string,
+    productId: string,
+  ): Promise<{ isWishlisted: boolean }> {
     const customerGid = this.toCustomerGid(customerId);
     const productGid = this.toProductGid(productId);
 
-    const currentIds = await this.shopifyAdmin.getWishlistProductIds(customerGid);
+    const currentIds = await this.shopifyAdmin.getWishlistProductIds(shop, customerGid);
 
     const exists = currentIds.includes(productGid);
     const newIds = exists
       ? currentIds.filter((id) => id !== productGid)
       : [...currentIds, productGid];
 
-    await this.shopifyAdmin.setWishlistProductIds(customerGid, newIds);
+    await this.shopifyAdmin.setWishlistProductIds(shop, customerGid, newIds);
 
     return { isWishlisted: !exists };
   }
@@ -48,15 +52,15 @@ export class WishlistService {
   /**
    * Returns full product details (title, image, price, url) for all items in the wishlist.
    */
-  async list(customerId: string) {
+  async list(shop: string, customerId: string) {
     const customerGid = this.toCustomerGid(customerId);
-    const productGids = await this.shopifyAdmin.getWishlistProductIds(customerGid);
+    const productGids = await this.shopifyAdmin.getWishlistProductIds(shop, customerGid);
 
     if (productGids.length === 0) {
       return { products: [] };
     }
 
-    const products = await this.shopifyAdmin.getProductsByIds(productGids);
+    const products = await this.shopifyAdmin.getProductsByIds(shop, productGids);
 
     return {
       products: products.map((p) => ({
